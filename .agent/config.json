@@ -1,0 +1,76 @@
+{
+  "model": {
+    "mainModel": "claude-sonnet-4-6",
+    "fallbackModel": "claude-sonnet-4-6",
+    "compactModel": "claude-sonnet-4-6",
+    "classifierModel": "claude-haiku-4"
+  },
+  "context": {
+    "contextWindowTokens": 200000,
+    "compactSummaryReserveCapTokens": 20000,
+    "autoCompactBufferTokens": 13000,
+    "manualCompactReserveTokens": 3000,
+    "warningBufferTokens": 20000,
+    "errorBufferTokens": 20000,
+    "maxConsecutiveAutoCompactFailures": 3
+  },
+  "modelOutput": {
+    "cappedDefaultTokens": 8000,
+    "escalatedRetryTokens": 64000,
+    "maxOutputRecoveryTurns": 3
+  },
+  "apiRetry": {
+    "defaultMaxRetries": 10,
+    "baseDelayMs": 500,
+    "maxDelayMs": 32000,
+    "jitterRatio": 0.25,
+    "maxConsecutive529": 3,
+    "streamIdleTimeoutMs": 90000,
+    "nonStreamingFallbackTimeoutMs": 300000,
+    "remoteNonStreamingFallbackTimeoutMs": 120000
+  },
+  "tools": {
+    "maxConcurrency": 10,
+    "mvpMaxConcurrency": 4,
+    "defaultResultPersistChars": 50000,
+    "perMessageResultChars": 200000,
+    "hardBudgetTokens": 100000,
+    "previewBytes": 2000
+  },
+  "bash": {
+    "defaultTimeoutMs": 120000,
+    "maxTimeoutMs": 600000,
+    "progressAfterMs": 2000,
+    "autoBackgroundAfterMs": 15000,
+    "blockStandaloneSleepSecondsGte": 2
+  },
+  "read": {
+    "maxOutputTokens": 25000,
+    "maxSizeBytes": 262144,
+    "cacheEntries": 100,
+    "cacheMemoryBytes": 26214400
+  },
+  "search": {
+    "grepDefaultHeadLimit": 250,
+    "globDefaultMaxResults": 100
+  },
+  "agents": {
+    "defaultMaxTurns": 20,
+    "forkMaxTurns": 200,
+    "maxConcurrentSubagents": 4,
+    "mcpWaitMaxMs": 30000,
+    "mcpPollIntervalMs": 500,
+    "progressHintAfterMs": 2000,
+    "uiProgressMessages": 3
+  },
+  "storage": {
+    "maxSessionBytes": 1073741824,
+    "transcriptMaxLineBytes": 1048576
+  },
+  "budgets": {
+    "maxToolCallsPerTurn": 30,
+    "maxAgentSpawnsPerTurn": 3,
+    "maxWallClockMsPerTurn": 900000,
+    "maxBackgroundTasks": 8
+  }
+}

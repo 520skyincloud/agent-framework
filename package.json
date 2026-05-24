@@ -1,0 +1,19 @@
+{
+  "name": "agent-framework",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Documentation-first blueprint for building single-agent and multi-agent frameworks.",
+  "type": "module",
+  "scripts": {
+    "docs:list": "ls docs/*.md",
+    "docs:check": "node -e \"const fs=require('fs'); for (const f of fs.readdirSync('docs')) if (f.endsWith('.md')) fs.readFileSync('docs/'+f,'utf8'); console.log('docs ok')\""
+  },
+  "keywords": [
+    "agent",
+    "agent-framework",
+    "multi-agent",
+    "llm",
+    "tools"
+  ],
+  "license": "UNLICENSED"
+}
