@@ -2,7 +2,7 @@
   "name": "agent-framework",
   "version": "0.1.0",
   "private": true,
-  "description": "Documentation-first blueprint for building single-agent and multi-agent frameworks.",
+  "description": "A documentation-first blueprint for building reliable single-agent and multi-agent software.",
   "type": "module",
   "scripts": {
     "docs:list": "ls docs/*.md",
