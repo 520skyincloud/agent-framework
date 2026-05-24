@@ -1,3 +1,11 @@
+> 中文标题：文件处理
+>
+> English title: File Handling
+>
+> 中文导读：本章说明 Read/Edit/Search 工具的具体限制，包括读取 token 上限、文件大小上限、编辑前必须读取、搜索结果限制和 VCS 排除规则。
+>
+> English guide: This chapter explains concrete Read/Edit/Search limits: read token caps, file size caps, read-before-edit, search limits, and VCS exclusions.
+
 # 8. File Handling
 
 ## 8.1 Read Tool Defaults

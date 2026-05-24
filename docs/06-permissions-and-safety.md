@@ -1,3 +1,11 @@
+> 中文标题：权限与安全
+>
+> English title: Permissions And Safety
+>
+> 中文导读：本章说明权限模式、权限决策流程、规则格式、Bash 安全默认值，以及不同模式下读写和命令执行的具体策略。
+>
+> English guide: This chapter explains permission modes, the permission decision pipeline, rule formats, Bash safety defaults, and concrete read/write/command policies.
+
 # 6. Permissions And Safety
 
 ## 6.1 Permission Modes

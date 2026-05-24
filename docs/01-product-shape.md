@@ -1,3 +1,11 @@
+> 中文标题：产品形态
+>
+> English title: Product Shape
+>
+> 中文导读：本章说明 Agent 系统不是简单的 LLM 包装，而是一个包含会话、工具、上下文、权限、记忆、任务、多 Agent、持久化和可观测性的运行时。
+>
+> English guide: This chapter explains that an agent system is not a thin LLM wrapper, but a runtime with sessions, tools, context, permissions, memory, tasks, multi-agent support, persistence, and observability.
+
 # 1. Product Shape
 
 An agent system is not just an LLM wrapper. It is a runtime that repeatedly:

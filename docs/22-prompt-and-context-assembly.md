@@ -1,3 +1,11 @@
+> 中文标题：Prompt 与上下文组装
+>
+> English title: Prompt And Context Assembly
+>
+> 中文导读：本章给出固定 Prompt 组装顺序、200k 上下文预算分区、PromptBundle 结构和上下文选择算法。
+>
+> English guide: This chapter gives a deterministic prompt assembly order, 200k context budget allocation, PromptBundle shape, and context selection algorithm.
+
 # 22. Prompt And Context Assembly
 
 The framework needs a deterministic prompt pipeline. A vague "build context" step is not enough.

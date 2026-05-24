@@ -1,3 +1,11 @@
+> 中文标题：存储 Schema 与恢复算法
+>
+> English title: Storage Schema And Resume Algorithm
+>
+> 中文导读：本章定义 TranscriptRecord、ToolOutputRecord、JSONL 写入规则、恢复步骤和损坏数据修复策略。
+>
+> English guide: This chapter defines TranscriptRecord, ToolOutputRecord, JSONL write rules, resume steps, and repair strategies for corrupted data.
+
 # 24. Storage Schema And Resume Algorithm
 
 Persistence should be append-only where possible.

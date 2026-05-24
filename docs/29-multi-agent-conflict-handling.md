@@ -1,3 +1,11 @@
+> 中文标题：多 Agent 冲突处理
+>
+> English title: Multi-Agent Conflict Handling
+>
+> 中文导读：本章说明 FileLease、读写冲突策略、worktree 隔离和多 Agent 工作合并协议。
+>
+> English guide: This chapter explains FileLease, read/write conflict policy, worktree isolation, and multi-agent merge protocol.
+
 # 29. Multi-Agent Conflict Handling
 
 Spawning multiple agents is easy. Merging their work is the hard part.

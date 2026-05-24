@@ -1,3 +1,11 @@
+> 中文标题：核心运行时模型
+>
+> English title: Core Runtime Model
+>
+> 中文导读：本章定义消息类型、主 Agent 循环、状态机、失败处理规则和 tool_use/tool_result 配对校验，是整个框架最核心的部分。
+>
+> English guide: This chapter defines message types, the main agent loop, state machine, failure handling rules, and tool_use/tool_result pairing validation. It is the core of the framework.
+
 # 2. Core Runtime Model
 
 ## 2.1 Message Types

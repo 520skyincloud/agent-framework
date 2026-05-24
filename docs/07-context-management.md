@@ -1,3 +1,11 @@
+> 中文标题：上下文管理
+>
+> English title: Context Management
+>
+> 中文导读：本章给出上下文窗口、压缩阈值、warning/blocking 公式、模型输出默认值、compaction 策略和常见上下文反模式。
+>
+> English guide: This chapter gives context window numbers, compaction thresholds, warning/blocking formulas, model output defaults, compaction strategy, and common context anti-patterns.
+
 # 7. Context Management
 
 ## 7.1 Context Window Numbers

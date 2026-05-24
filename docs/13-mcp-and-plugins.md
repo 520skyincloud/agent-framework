@@ -1,3 +1,11 @@
+> 中文标题：MCP 与插件
+>
+> English title: MCP And Plugins
+>
+> 中文导读：本章说明 MCP/插件工具应该作为一等工具接入，包含连接状态、命名冲突、权限、延迟加载和清理规则。
+>
+> English guide: This chapter explains how MCP/plugin tools should be first-class tools, including connection states, name conflicts, permissions, lazy loading, and cleanup rules.
+
 # 13. MCP And Plugins
 
 MCP/plugin tools should be first-class tools, not special cases in the agent loop.

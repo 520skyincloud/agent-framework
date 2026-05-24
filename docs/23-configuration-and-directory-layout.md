@@ -1,3 +1,11 @@
+> 中文标题：配置系统与目录结构
+>
+> English title: Configuration And Directory Layout
+>
+> 中文导读：本章说明配置优先级、项目/用户配置文件、运行时目录结构和 AgentRuntimeConfig schema。
+>
+> English guide: This chapter explains config precedence, project/user config files, runtime directory layout, and AgentRuntimeConfig schema.
+
 # 23. Configuration And Directory Layout
 
 Agent frameworks become unmaintainable when constants live inside random modules.

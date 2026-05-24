@@ -1,3 +1,11 @@
+> 中文标题：模型适配层与模型路由
+>
+> English title: Provider Adapter And Model Routing
+>
+> 中文导读：本章定义 ProviderAdapter、模型事件、重试策略、退避数字、stream watchdog、模型路由和不同调用类型的输出预算。
+>
+> English guide: This chapter defines ProviderAdapter, model events, retry policy, backoff numbers, stream watchdog, model routing, and output budgets for call types.
+
 # 21. Provider Adapter And Model Routing
 
 The model provider must be behind an adapter. Do not let provider-specific message shapes leak into the agent loop.

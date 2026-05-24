@@ -1,3 +1,11 @@
+> 中文标题：工具执行编排
+>
+> English title: Tool Execution Orchestration
+>
+> 中文导读：本章说明工具如何并发、如何分批、哪些工具必须串行、streaming tool execution 的边界，以及工具成功后如何修改上下文状态。
+>
+> English guide: This chapter explains tool concurrency, batching, which tools must run serially, streaming tool execution boundaries, and context modifiers after tool success.
+
 # 5. Tool Execution Orchestration
 
 ## 5.1 Concurrency

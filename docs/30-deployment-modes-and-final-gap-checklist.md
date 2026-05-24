@@ -1,3 +1,11 @@
+> 中文标题：部署模式与最终检查清单
+>
+> English title: Deployment Modes And Final Gap Checklist
+>
+> 中文导读：本章比较本地 CLI、桌面、SDK、远程 session、团队平台部署模式，并给出最终框架缺口清单。
+>
+> English guide: This chapter compares local CLI, desktop, SDK, remote session, and team platform deployment modes, and provides the final framework gap checklist.
+
 # 30. Deployment Modes And Final Gap Checklist
 
 ## 30.1 Deployment Modes

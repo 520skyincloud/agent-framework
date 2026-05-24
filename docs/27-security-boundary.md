@@ -1,3 +1,11 @@
+> 中文标题：安全边界
+>
+> English title: Security Boundary
+>
+> 中文导读：本章区分权限和安全，说明路径归一化、workspace 边界、命令解析、sandbox、网络、secret 和审计日志。
+>
+> English guide: This chapter separates permissions from security and covers path normalization, workspace boundaries, command parsing, sandboxing, network policy, secrets, and audit logs.
+
 # 27. Security Boundary
 
 Permissions are not the same as security. Permissions decide whether to attempt an action; sandboxing limits damage if the decision is wrong.

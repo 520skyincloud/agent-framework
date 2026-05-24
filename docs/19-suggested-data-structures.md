@@ -1,3 +1,11 @@
+> 中文标题：建议数据结构
+>
+> English title: Suggested Data Structures
+>
+> 中文导读：本章给出 QueryParams、ToolUseContext、AppState 等核心数据结构，方便直接实现。
+>
+> English guide: This chapter provides core data structures such as QueryParams, ToolUseContext, and AppState for direct implementation.
+
 # 19. Suggested Data Structures
 
 ## QueryParams

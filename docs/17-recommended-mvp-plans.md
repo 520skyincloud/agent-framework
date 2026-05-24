@@ -1,3 +1,11 @@
+> 中文标题：推荐 MVP 路线
+>
+> English title: Recommended MVP Plans
+>
+> 中文导读：本章把单 Agent 和多 Agent MVP 拆成阶段，每个阶段都有需求、验收标准和默认数字。
+>
+> English guide: This chapter breaks single-agent and multi-agent MVPs into phases, each with requirements, acceptance tests, and default numbers.
+
 # 17. Recommended MVP Plans
 
 ## 17.1 Single-Agent MVP

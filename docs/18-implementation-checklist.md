@@ -1,3 +1,11 @@
+> 中文标题：实施检查清单
+>
+> English title: Implementation Checklist
+>
+> 中文导读：本章提供上线前检查清单，覆盖核心循环、工具、权限、上下文、多 Agent 和持久化。
+>
+> English guide: This chapter provides a launch checklist covering the core loop, tools, permissions, context, multi-agent behavior, and persistence.
+
 # 18. Implementation Checklist
 
 Use this as a launch checklist.

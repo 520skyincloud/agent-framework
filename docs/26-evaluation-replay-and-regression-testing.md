@@ -1,3 +1,11 @@
+> 中文标题：评估、回放与回归测试
+>
+> English title: Evaluation, Replay, And Regression Testing
+>
+> 中文导读：本章说明测试分层、Golden Replay 格式、最小回放用例和质量指标，是保证 Agent loop 不退化的关键。
+>
+> English guide: This chapter explains test layers, Golden Replay format, minimum replay cases, and quality metrics. It is key to preventing agent loop regressions.
+
 # 26. Evaluation, Replay, And Regression Testing
 
 You cannot trust an Agent framework without replay tests.

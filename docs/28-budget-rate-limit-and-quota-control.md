@@ -1,3 +1,11 @@
+> 中文标题：预算、速率限制与配额控制
+>
+> English title: Budget, Rate Limit, And Quota Control
+>
+> 中文导读：本章定义 token、成本、工具调用、Agent spawn、后台任务和存储预算，以及预算超限时如何返回模型可见消息。
+>
+> English guide: This chapter defines budgets for tokens, cost, tool calls, agent spawns, background tasks, and storage, plus model-visible budget-exceeded messages.
+
 # 28. Budget, Rate Limit, And Quota Control
 
 Budget control must happen before model and tool calls, not only after billing arrives.

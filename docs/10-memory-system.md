@@ -1,3 +1,11 @@
+> 中文标题：记忆系统
+>
+> English title: Memory System
+>
+> 中文导读：本章说明消息历史、文件读取缓存、session memory 三层记忆，以及初始化、更新、预算和结构化记忆字段。
+>
+> English guide: This chapter explains the three memory layers: message history, file read cache, and session memory, including initialization, updates, budgets, and structured sections.
+
 # 10. Memory System
 
 Use three memory layers:

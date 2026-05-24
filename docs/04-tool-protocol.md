@@ -1,3 +1,11 @@
+> 中文标题：工具协议
+>
+> English title: Tool Protocol
+>
+> 中文导读：本章定义工具接口、工具生命周期、内置工具集合、工具结果落盘规则和不同大小输出的处理方式。
+>
+> English guide: This chapter defines the tool interface, tool call lifecycle, built-in tool set, tool result persistence, and output handling by size class.
+
 # 4. Tool Protocol
 
 ## 4.1 Tool Interface

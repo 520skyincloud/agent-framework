@@ -1,3 +1,11 @@
+> 中文标题：多 Agent 架构
+>
+> English title: Multi-Agent Architecture
+>
+> 中文导读：本章说明子 Agent 类型、Agent 定义 schema、上下文隔离、通信通道、父子协议、拓扑选择和权限冒泡。
+>
+> English guide: This chapter explains subagent types, agent definition schema, context isolation, communication channels, parent-child contracts, topology choices, and permission bubbling.
+
 # 11. Multi-Agent Architecture
 
 ## 11.1 Subagent Types

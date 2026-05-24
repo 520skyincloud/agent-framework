@@ -1,3 +1,11 @@
+> 中文标题：先读这里
+>
+> English title: Read Me First
+>
+> 中文导读：本章是整个项目的入口，包含优化记录、源码映射、关键常量、架构图、最小数据流、开箱即用实施指南、默认配置、接口模板和验收测试。
+>
+> English guide: This chapter is the project entry point. It contains the optimization history, source map, constants, architecture diagram, minimal data flow, drop-in implementation guide, default config, interface templates, and acceptance tests.
+
 # Agent System Architecture Blueprint - 20-Round Optimized Edition
 
 本文档是一份可复用的智能体系统架构规格书。目标不是解释“智能体是什么”，而是给出可以直接照着实现的模块、接口、状态机、阈值、默认配置、失败处理和测试验收标准。

@@ -1,3 +1,11 @@
+> 中文标题：持久化与恢复
+>
+> English title: Persistence And Resume
+>
+> 中文导读：本章说明主 transcript、sidechain transcript、工具输出、后台任务、Agent metadata、文件历史如何写入和恢复。
+>
+> English guide: This chapter explains how to persist and resume main transcripts, sidechain transcripts, tool outputs, background tasks, agent metadata, and file history.
+
 # 15. Persistence And Resume
 
 Persist:

@@ -1,3 +1,11 @@
+> 中文标题：可观测性
+>
+> English title: Observability
+>
+> 中文导读：本章定义需要追踪的事件、事件 schema、关联 ID、生产测试矩阵、SLO 和远程部署限流建议。
+>
+> English guide: This chapter defines events to track, event schema, correlation IDs, production test matrix, SLOs, and remote deployment rate limits.
+
 # 16. Observability
 
 Track at least:

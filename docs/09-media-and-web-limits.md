@@ -1,3 +1,11 @@
+> 中文标题：媒体与 Web 限制
+>
+> English title: Media And Web Limits
+>
+> 中文导读：本章整理图片、PDF、媒体数量、WebFetch、URL、HTTP 内容、超时、缓存和重定向策略的具体默认值。
+>
+> English guide: This chapter collects concrete defaults for images, PDFs, media counts, WebFetch, URLs, HTTP content, timeouts, caches, and redirect policy.
+
 # 9. Media And Web Limits
 
 ## 9.1 Images And PDFs

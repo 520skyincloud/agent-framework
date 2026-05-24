@@ -1,3 +1,11 @@
+> 中文标题：值得保留的设计规则
+>
+> English title: Design Rules Worth Keeping
+>
+> 中文导读：本章总结十条设计原则，例如工具必须 typed/permissioned、大输出落盘、子 Agent 默认隔离、后台任务可见可停等。
+>
+> English guide: This chapter summarizes ten design principles, such as typed/permissioned tools, disk persistence for large output, isolated subagents, and visible/stoppable background work.
+
 # 20. Design Rules Worth Keeping
 
 1. Treat tools as typed, permissioned capabilities, not arbitrary functions.

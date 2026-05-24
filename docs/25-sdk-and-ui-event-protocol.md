@@ -1,3 +1,11 @@
+> 中文标题：SDK 与 UI 事件协议
+>
+> English title: SDK And UI Event Protocol
+>
+> 中文导读：本章定义统一 SDKEvent、ControlMessage，以及 CLI/GUI/SDK/远程客户端如何消费同一事件流。
+>
+> English guide: This chapter defines a unified SDKEvent and ControlMessage protocol so CLI, GUI, SDK, and remote clients can consume the same event stream.
+
 # 25. SDK And UI Event Protocol
 
 An Agent framework should expose one event stream that CLI, GUI, SDK, and remote clients can all consume.
