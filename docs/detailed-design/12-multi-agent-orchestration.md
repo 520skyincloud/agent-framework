@@ -55,11 +55,11 @@ type SubagentResult = { agentId: string; transcriptPath: string; summary: string
 
 | 参数名 | 中文含义 | 单位 | 默认值 | 为什么是这个值 | 触发行为 | 调大后果 | 调小后果 |
 |---|---|---|---:|---|---|---|---|
-| `defaultSubagentMaxTurns` | 普通子 Agent 上限 | 轮 | `20` | 这个数量限制用于控制一次任务的执行规模，防止循环、并发或子任务无限扩张。 | 数量达到该值时停止、排队、截断或要求用户确认。 | 吞吐和覆盖面更高，但成本、冲突和排查难度上升。 | 系统更稳，但复杂任务更容易分多轮完成。 |
-| `forkMaxTurns` | fork 型子 Agent 最大轮数 | 轮 | `200` | 200 给长调查/验证任务足够空间，但仍有硬上限。 | 后台或 fork 子 Agent 使用。 | 长任务更完整但成本高。 | 长调查更容易中断。 |
+| `defaultSubagentMaxTurns` | 普通子 Agent 最大轮数 | 轮 | `20` | 普通子 Agent 只应解决一个明确子问题，20 轮足够读取、验证和总结。 | 子 Agent 达到 20 轮后停止，返回 partial summary 给父 Agent。 | 子 Agent 独立性更强，但更容易跑偏和消耗预算。 | 父 Agent 需要更频繁拆分任务。 |
+| `forkMaxTurns` | fork 型子 Agent 最大轮数 | 轮 | `200` | 200 给长调查/验证任务足够空间，但仍有硬上限。 | 后台或 fork 子 Agent 使用。 | 长任务更完整但成本高。 | 长调查更容易中断，需要父 Agent 重新派发后续任务。 |
 | `maxAgentSpawnsPerTurn` | 单轮子 Agent 启动上限 | 个 | `3` | 3 个足够并行调查、实现、验证，避免 agent 爆炸。 | 父 Agent 同一轮启动超过上限时拒绝。 | 并行更强但成本和冲突上升。 | 复杂任务拆分能力下降。 |
-| `subagentSummaryMaxTokens` | 返回父 Agent 的摘要上限 | tokens | `8_000` | 这个值按 token 预算设置，用来把关键上下文放进模型输入，同时避免某一类内容挤掉最新用户意图。 | 组装 prompt 或计算 token 预算时使用。 | 该类内容可保留更多，但会挤压其它上下文。 | prompt 更紧凑，但可能丢失必要背景。 |
-| `readOnlyFirstMilestone` | 第一版只读 | 文本/策略 | `true` | 这个策略值用于给副作用、安全或部署行为一个确定默认，避免实现时出现隐式放行。 | 权限、部署或安全检查进入对应分支时使用。 | 如果改得更宽松，操作更顺滑但安全风险更高。 | 如果改得更保守，安全性更强但需要更多确认。 |
+| `subagentSummaryMaxTokens` | 返回父 Agent 的摘要上限 | tokens | `8_000` | 父 Agent 只需要结论、证据、文件和风险，不需要完整子 transcript。 | 子 Agent 完成后摘要超过 8k 就 microcompact 再返回。 | 父 Agent 获得更多细节，但上下文压力增大。 | 摘要更短，可能缺少证据链。 |
+| `readOnlyFirstMilestone` | 第一版子 Agent 是否只读 | 布尔 | `true` | 第一版先让子 Agent 负责调查和验证，避免多个 Agent 并发写同一工作区。 | launchSubagent 时剔除 Edit/Write/危险 Bash，只保留读取类工具。 | 若关闭，子 Agent 可并行实现，但文件冲突和权限风险上升。 | 保持开启会让实现动作必须回到父 Agent。 |
 
 ## 详细流程
 

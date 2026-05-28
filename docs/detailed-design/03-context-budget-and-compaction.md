@@ -96,9 +96,9 @@ type CompactSummary = {
 | `defaultContextWindow` | 默认模型上下文窗口 | tokens | `200_000` | 200k 能覆盖大多数编程任务，又不假设所有 provider 都支持 1M。 | 未显式指定模型窗口时使用。 | 长历史更少压缩，但成本和延迟更高。 | 长任务更容易提前 compact。 |
 | `largeContextWindow` | 大上下文模型窗口 | tokens | `1_000_000` | 给长仓库、多 Agent 汇总和超长 transcript 使用。 | 路由到大上下文模型时使用。 | 可保留更多历史，但调用更慢更贵。 | 大会话更早进入压缩。 |
 | `compactOutputReserve` | 大模型输出/摘要预留上限 | tokens | `20_000` | 20k 足够输出完整压缩摘要和长回答，同时不会无限侵占 prompt 空间。 | 计算 `effectiveWindow` 时扣除。 | 输出更安全，但 prompt 可用空间减少。 | prompt 空间更大，但输出截断风险上升。 |
-| `smallModelReserveCap` | 20k 小模型输出预留上限 | tokens | `4_000` | 小模型总窗口只有 20k，继续预留 20k 会让 prompt 空间归零。 | 目标模型 `contextWindow <= 20_000` 时使用。 | 小模型输出更充分，但可输入内容更少。 | 输出更容易截断。 |
+| `smallModelReserveCap` | 20k 小模型输出预留上限 | tokens | `4_000` | 小模型总窗口只有 20k，继续预留 20k 会让 prompt 空间归零。 | 目标模型 `contextWindow <= 20_000` 时使用。 | 小模型输出更充分，但可输入内容更少。 | 输出更容易截断，模型可能无法完整说明恢复步骤。 |
 | `autoCompactBuffer` | 自动压缩缓冲 | tokens | `13_000` | 给 token 估算误差、工具 schema 和 provider 包装留安全余量。 | prompt 超过 `autoCompactAt` 时触发自动 compact。 | 更早压缩，安全但频繁。 | 更晚压缩，provider 拒绝风险上升。 |
-| `blockingReserve` | 阻塞前最后保留空间 | tokens | `3_000` | 给错误解释、恢复消息和 provider 包装留下最后空间。 | prompt 超过 `blockAt` 时禁止直接调用模型。 | 更保守，更早阻塞。 | 更激进，但 prompt too long 风险更高。 |
+| `blockingReserve` | 阻塞前最后保留空间 | tokens | `3_000` | 给错误解释、恢复消息和 provider 包装留下最后空间。 | prompt 超过 `blockAt` 时禁止直接调用模型。 | block 更早触发，用户更常需要 compact 或换模型。 | block 更晚触发，provider 返回 prompt too long 的风险更高。 |
 | `warningBuffer` | warning 提前量 | tokens | `20_000` | 在真正压缩前给 UI 和用户留足操作空间。 | prompt 超过 `warningThreshold` 时发 warning。 | 更早提醒，可能更打扰。 | 更晚提醒，用户更难处理。 |
 | `maxCompactFailures` | 自动压缩连续失败熔断次数 | 次 | `3` | 3 次能覆盖偶发失败，同时避免无限循环和成本失控。 | 第 3 次失败后 block。 | 恢复机会更多，但成本更高。 | 更快失败，但偶发问题更容易中断任务。 |
 

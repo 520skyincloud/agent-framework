@@ -54,11 +54,11 @@ type McpToolRef = { serverName: string; toolName: string; runtimeName: string; i
 
 | 参数名 | 中文含义 | 单位 | 默认值 | 为什么是这个值 | 触发行为 | 调大后果 | 调小后果 |
 |---|---|---|---:|---|---|---|---|
-| `mcpWaitMaxMs` | MCP 连接等待上限 | 毫秒 | `30_000` | 30 秒能覆盖本地服务启动，同时避免一直等坏连接。 | 连接 MCP server 时使用。 | 慢服务更容易连上。 | 问题服务阻塞更久。 |
-| `mcpPollIntervalMs` | MCP 轮询间隔 | 毫秒 | `500` | 500ms 兼顾响应速度和 CPU 开销。 | 等待 MCP ready 时轮询。 | CPU 更省但 ready 反馈慢。 | 响应更快但轮询更频繁。 |
-| `schemaCacheTtlMs` | schema 缓存 | 毫秒 | `300_000` | 这个值按 token 预算设置，用来把关键上下文放进模型输入，同时避免某一类内容挤掉最新用户意图。 | 组装 prompt 或计算 token 预算时使用。 | 该类内容可保留更多，但会挤压其它上下文。 | prompt 更紧凑，但可能丢失必要背景。 |
-| `toolCallTimeoutMs` | MCP 工具调用超时 | 毫秒 | `120_000` | 这个时间值用于区分正常等待和疑似卡死，第一版优先保证任务不会无限挂起。 | 运行时间或等待时间超过该值时触发超时、刷新、心跳或清理。 | 更不容易误杀慢任务，但卡住时等待更久。 | 故障暴露更快，但慢任务更容易被误判。 |
-| `maxToolsPerServer` | 单 server 工具上限 | 个 | `128` | 这个数量限制用于控制一次任务的执行规模，防止循环、并发或子任务无限扩张。 | 数量达到该值时停止、排队、截断或要求用户确认。 | 吞吐和覆盖面更高，但成本、冲突和排查难度上升。 | 系统更稳，但复杂任务更容易分多轮完成。 |
+| `mcpWaitMaxMs` | MCP 连接等待上限 | 毫秒 | `30_000` | 30 秒覆盖本地 MCP server 启动和握手，避免坏连接拖住 Agent。 | 等待 MCP ready 超过 30 秒后标记 server unavailable。 | 慢服务更容易连上，但失败反馈更晚。 | 慢启动 server 更容易被误判不可用。 |
+| `mcpPollIntervalMs` | MCP ready 轮询间隔 | 毫秒 | `500` | 500ms 能较快发现 ready，又不会高频占用 CPU。 | 等待 MCP ready 时每 500ms 轮询一次状态。 | CPU 更省，但 ready 后开始执行更慢。 | 响应更快，但轮询事件更多。 |
+| `schemaCacheTtlMs` | MCP 工具 schema 缓存时间 | 毫秒 | `300_000` | 5 分钟内 MCP 工具列表通常不会变化，缓存可减少握手和 prompt 重组成本。 | 缓存未过期时复用 schema；过期后重新 list tools。 | schema 更新感知更慢，但性能更稳。 | 更频繁刷新，动态变化更及时但延迟上升。 |
+| `toolCallTimeoutMs` | MCP 工具调用超时 | 毫秒 | `120_000` | MCP 工具可能访问外部服务，2 分钟是交互调用的默认等待上限。 | 单次 MCP tool call 超过 120 秒返回 timeout tool_result。 | 慢外部服务更容易完成，但回合等待更久。 | 慢工具更容易失败，需要用户重试或改用后台任务。 |
+| `maxToolsPerServer` | 单个 MCP server 可暴露工具上限 | 个 | `128` | 128 能覆盖大型插件，同时防止一个 server 把 prompt schema 塞爆。 | list tools 超过 128 个时只加载前 128 个并记录 truncation。 | 可见工具更多，但 schema token 和误选概率上升。 | 工具列表更短，但低优先级工具可能不可用。 |
 
 ## 详细流程
 
