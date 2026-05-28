@@ -1,68 +1,52 @@
-# 先读这里 / Read Me First
+# 先读这里
 
-## 本章目标 / Goals
+## 本章目标
 
 让读者快速理解项目目标、关键数字、实施顺序和第一版交付物。
 
-Help readers quickly understand the project goal, key numbers, implementation order, and first deliverable.
-
 完成本章后，读者应该知道这一层为什么存在、如何实现最小版本、哪些默认值不能随意改、以及如何验收。
 
-After this chapter, the reader should know why this layer exists, how to implement the minimal version, which defaults must not be changed casually, and how to validate it.
+如果你的目标是实现框架，请先读 [详细设计索引](./detailed-design/00-index.md)。00-30 章节负责学习路线和总览；真正细到状态机、阈值、接口、伪代码、提示词模板、失败分支和验收用例的内容，放在 `docs/detailed-design/`。
 
-## 核心概念 / Core Concepts
+## 核心概念
 
 - 文档入口必须降低上手成本。
 - 本章能力必须有清晰的输入、输出、失败语义和测试边界。
 - 任何影响模型下一步行为的状态，都必须能被记录、恢复或回放。
 
-- The entry document must reduce onboarding cost.
-- This capability must have clear input, output, failure semantics, and test boundaries.
-- Any state that affects the model's next action must be recordable, recoverable, or replayable.
-
-## 架构位置 / Where This Fits
+## 架构位置
 
 本章位于 `onboarding` 层。它不是孤立模块，而是和主循环、工具系统、上下文管理、持久化、权限或 SDK 事件流共同工作。实现时要明确本层是否拥有状态，是否会产生副作用，是否会改变下一轮模型输入。
 
-This chapter belongs to the `onboarding` layer. It is not an isolated module; it works with the main loop, tool system, context management, persistence, permissions, or SDK event stream. Implementation must make clear whether this layer owns state, produces side effects, or changes the next model input.
-
-## 具体设计 / Concrete Design
+## 具体设计
 
 最小设计应包含四个部分：输入对象、输出对象、错误对象和持久化记录。输入对象用于阻止隐式全局依赖；输出对象用于让 UI、SDK 和 replay 共用同一结果；错误对象用于让模型或用户知道下一步怎么恢复；持久化记录用于崩溃后继续运行。
 
-The minimal design should contain four parts: input object, output object, error object, and persistence record. The input object prevents hidden global dependencies; the output object lets UI, SDK, and replay share the same result; the error object tells the model or user how to recover; the persistence record lets execution continue after a crash.
-
 成熟设计还应该补充可观测性和预算控制。只要本章能力可能变慢、变贵、失败或产生副作用，就必须发出事件并记录关键 ID。
 
-A mature design should also include observability and budget control. If this capability can become slow, expensive, fail, or produce side effects, it must emit events and record key IDs.
+## 接口与数据结构
 
-## 接口与数据结构 / Interfaces And Data Structures
-
-| 边界 / Boundary | 中文说明 | English Description |
-|---|---|---|
-| Input | 调用方必须显式传入的状态和参数。 | Explicit state and parameters required from the caller. |
-| Output | 成功时返回的数据、事件或状态变更。 | Data, events, or state changes returned on success. |
-| Error | 失败时返回给用户、模型或调用方的结构化错误。 | Structured errors returned to the user, model, or caller. |
-| Persistence | 必须写入 transcript、metadata 或输出文件的内容。 | Content that must be written to transcript, metadata, or output files. |
-| Replay | 回放测试需要记录和模拟的输入输出。 | Inputs and outputs replay tests must record and simulate. |
+| 边界 | 说明 |
+|---|---|
+| 输入 | 调用方必须显式传入的状态和参数。 |
+| 输出 | 成功时返回的数据、事件或状态变更。 |
+| 错误 | 失败时返回给用户、模型或调用方的结构化错误。 |
+| 持久化 | 必须写入 transcript、metadata 或输出文件的内容。 |
+| 回放 | 回放测试需要记录和模拟的输入输出。 |
 
 建议接口命名保持直接，例如 `onboardingConfig`、`onboardingState`、`onboardingEvent`、`onboardingResult`。如果这些类型变得过大，优先拆分所有权，而不是把所有字段塞进一个全局对象。
 
-Use direct names such as `onboardingConfig`, `onboardingState`, `onboardingEvent`, and `onboardingResult`. If these types become too large, split ownership instead of putting every field into one global object.
+## 默认值与关键数字
 
-## 默认值与关键数字 / Defaults And Numbers
-
-| 配置 / Config | 默认值 / Default | 说明 / Notes |
+| 配置 | 默认值 | 说明 |
 |---|---:|---|
-| `configSource` | `.agent/config.json` | 实现时显式引用，不要隐藏在业务逻辑中。 / Reference explicitly in implementation; do not hide it in business logic. |
-| `owner` | `explicit module` | 实现时显式引用，不要隐藏在业务逻辑中。 / Reference explicitly in implementation; do not hide it in business logic. |
-| `testMode` | `replay case required` | 实现时显式引用，不要隐藏在业务逻辑中。 / Reference explicitly in implementation; do not hide it in business logic. |
+| `configSource` | `.agent/config.json` | 实现时显式引用，不要隐藏在业务逻辑中。 |
+| `owner` | `explicit module` | 实现时显式引用，不要隐藏在业务逻辑中。 |
+| `testMode` | `replay case required` | 实现时显式引用，不要隐藏在业务逻辑中。 |
 
 如果本章没有专属数字，就使用 `.agent/config.json` 中的全局默认值，并在实现中显式引用。不要让默认值只存在于文档里。
 
-If this chapter has no dedicated numbers, use the global defaults in `.agent/config.json` and reference them explicitly in implementation. Defaults should not live only in documentation.
-
-## 实现步骤 / Implementation Steps
+## 实现步骤
 
 1. 先实现最小闭环，再添加高级能力。
 2. 定义输入、输出、错误和持久化边界。
@@ -70,13 +54,7 @@ If this chapter has no dedicated numbers, use the global defaults in `.agent/con
 4. 为正常路径、失败路径和边界值写测试。
 5. 把影响下一轮模型行为的状态写入 transcript、metadata 或 replay fixture。
 
-1. Implement the minimal closed loop before adding advanced capabilities.
-2. Define input, output, error, and persistence boundaries.
-3. Centralize defaults in config or constants.
-4. Write tests for happy paths, failure paths, and boundary values.
-5. Write state that affects the next model turn into transcript, metadata, or replay fixtures.
-
-## 测试与验收 / Tests And Acceptance Criteria
+## 测试与验收
 
 - 正常路径必须产出符合接口的结果。
 - 失败路径必须返回结构化错误，而不是静默失败。
@@ -84,44 +62,25 @@ If this chapter has no dedicated numbers, use the global defaults in `.agent/con
 - 恢复或回放时结果必须可解释。
 - 相关验收标准必须能被自动化测试验证。
 
-- The happy path must produce results matching the interface.
-- Failure paths must return structured errors instead of failing silently.
-- At default limits, behavior must match this document.
-- Resume or replay results must be explainable.
-- Acceptance criteria must be verifiable by automated tests.
-
-## 常见错误 / Common Mistakes
+## 常见错误
 
 - 只写概念，没有写输入输出和验收。
 - 把默认数字散落在多个实现文件。
 - 失败时直接 throw，导致主循环无法恢复。
 - 没有 replay case，后续重构容易破坏行为。
 
-- Writing concepts without inputs, outputs, and acceptance criteria.
-- Scattering default numbers across implementation files.
-- Throwing on failure so the main loop cannot recover.
-- Skipping replay cases, making future refactors risky.
-
-## 本章总结 / Summary
+## 本章总结
 
 本章的重点是把 `onboarding` 层变成可实现、可测试、可恢复的工程边界。只要边界清楚，后续实现者就不需要靠猜。
 
-The focus of this chapter is to turn the `onboarding` layer into an implementable, testable, and recoverable engineering boundary. When boundaries are clear, implementers do not need to guess.
-
-## 参考蓝图细节 / Reference Blueprint Details
+## 参考蓝图细节
 
 以下内容保留原始架构蓝图中的细节、表格和代码片段，供实现时逐项对照。
 
-The following section preserves the detailed tables, code snippets, and notes from the original architecture blueprint for implementation reference.
-
 本文档是一份可复用的智能体系统架构规格书。目标不是解释“智能体是什么”，而是给出可以直接照着实现的模块、接口、状态机、阈值、默认配置、失败处理和测试验收标准。
-
-## 0A. First Optimization Pass
 
 本版对原文档做了 10 轮优化，每一轮对应一个具体交付物：
 
-| Round | Optimization | Concrete Output |
-|---:|---|---|
 | 1 | 结构审计 | 明确主路径：入口 -> 会话 -> Agent Loop -> 模型 -> 工具 -> 结果 -> 持久化 |
 | 2 | 数字复核 | 增加全局常量表，并区分源码硬默认、可配置默认、建议默认 |
 | 3 | 模块图 | 增加端到端架构图和源码映射表 |
@@ -133,12 +92,8 @@ The following section preserves the detailed tables, code snippets, and notes fr
 | 9 | 生产化 | 补充测试矩阵、观测事件、恢复策略 |
 | 10 | 文档收敛 | 统一术语、去掉泛泛建议，把模糊处改成实现约束 |
 
-## 0B. Second Optimization Pass
-
 读完前 10 轮版本后，继续做第 11-20 轮优化。原因：前 10 轮已经覆盖核心 runtime，但一个真正可复用的 Agent 框架还需要 provider 抽象、prompt 组装、配置、存储 schema、SDK/UI 协议、评估回放、安全沙箱、预算控制、多 Agent 合并和部署形态。
 
-| Round | Missing Area | Concrete Output |
-|---:|---|---|
 | 11 | 工程缺口审计 | 明确还缺模型适配、prompt pipeline、配置、存储、SDK、评估、安全、预算、冲突处理、部署 |
 | 12 | 模型适配层 | 增加 ProviderAdapter 接口、重试/退避/stream watchdog 具体数字 |
 | 13 | Prompt 组装 | 增加固定上下文顺序、预算分区、工具 schema 注入规则 |
@@ -150,34 +105,10 @@ The following section preserves the detailed tables, code snippets, and notes fr
 | 19 | 成本预算 | 增加 token/cost/tool/task/subagent 预算与速率限制 |
 | 20 | 多 Agent 收敛 | 增加文件冲突、worktree merge、部署模式和最终缺口清单 |
 
-## 0.1 Source Map
-
 这份文档主要从下列源码文件抽取架构，不依赖猜测：
-
-| Area | Source Files |
-|---|---|
-| CLI / session entry | `src/entrypoints/cli.tsx`, `src/QueryEngine.ts` |
-| Main agent loop | `src/query.ts` |
-| Provider streaming / max output | `src/services/api/claude.ts`, `src/utils/context.ts` |
-| Auto compact | `src/services/compact/autoCompact.ts`, `src/services/compact/compact.ts` |
-| Tool contract | `src/Tool.ts` |
-| Tool registry | `src/tools.ts` |
-| Tool orchestration | `src/services/tools/toolOrchestration.ts`, `src/services/tools/toolExecution.ts`, `src/services/tools/StreamingToolExecutor.ts` |
-| Tool result storage | `src/constants/toolLimits.ts`, `src/utils/toolResultStorage.ts` |
-| Read limits | `src/tools/FileReadTool/limits.ts`, `src/tools/FileReadTool/FileReadTool.ts` |
-| Permissions | `src/utils/permissions/permissions.ts`, `src/tools/BashTool/bashPermissions.ts` |
-| Bash safety | `src/tools/BashTool/*`, `src/tasks/LocalShellTask/*` |
-| Subagents | `src/tools/AgentTool/AgentTool.tsx`, `src/tools/AgentTool/runAgent.ts`, `src/utils/forkedAgent.ts` |
-| Agent definitions | `src/tools/AgentTool/loadAgentsDir.ts`, `src/tools/AgentTool/built-in/*` |
-| Tasks | `src/utils/task/*`, `src/tools/TaskGetTool/*`, `src/tools/TaskUpdateTool/*` |
-| MCP | `src/services/mcp/*` |
-
-## 0.2 Constants You Can Reuse
 
 下表是实现一个 Agent 框架时可以直接放进配置文件的默认值。`Source Default` 表示源码里的硬默认或默认计算结果；`Architecture Default` 表示本文档建议你在新系统里采用的默认值。
 
-| Config Key | Source Default | Architecture Default | Notes |
-|---|---:|---:|---|
 | `context.window.defaultTokens` | `200_000` | `200_000` | 普通模型上下文窗口 |
 | `context.window.largeTokens` | `1_000_000` | `1_000_000` | 1M context 模型或显式 opt-in |
 | `context.compact.summaryReserveTokens` | `20_000` | `20_000` | 压缩摘要最大输出保留 |
@@ -233,27 +164,23 @@ The following section preserves the detailed tables, code snippets, and notes fr
 | `api.nonstreamingFallback.localTimeoutMs` | `300_000` | `300_000` | 非 streaming fallback 本地默认超时 |
 | `api.nonstreamingFallback.remoteTimeoutMs` | `120_000` | `120_000` | 远程 session fallback 超时 |
 
-## 0.3 Architecture Diagram
-
 ```mermaid
 flowchart TD
-  UI["CLI / Web / Desktop / SDK"] --> QE["QueryEngine<br/>session lifecycle"]
-  QE --> CTX["Context Manager<br/>system prompt, memory, compaction"]
-  CTX --> LOOP["Agent Loop<br/>query async generator"]
-  LOOP --> MODEL["Model Adapter<br/>streaming, retry, usage"]
+  UI["CLI / Web / Desktop / SDK"] --> QE["QueryEngine<br/>会话生命周期"]
+  QE --> CTX["上下文管理器<br/>系统提示词、记忆、压缩"]
+  CTX --> LOOP["Agent 主循环<br/>异步事件生成器"]
+  LOOP --> MODEL["模型适配层<br/>流式输出、重试、用量"]
   MODEL --> LOOP
-  LOOP --> ORCH["Tool Orchestrator<br/>batch, order, concurrency"]
-  ORCH --> PERM["Permission Pipeline<br/>deny, allow, ask, classifier"]
-  PERM --> TOOLS["Tool Runtime<br/>Read, Edit, Bash, Grep, Agent, MCP"]
-  TOOLS --> STORE["Persistence<br/>transcript, tool output, task output"]
+  LOOP --> ORCH["工具编排器<br/>批次、顺序、并发"]
+  ORCH --> PERM["权限流水线<br/>拒绝、允许、询问、分类器"]
+  PERM --> TOOLS["工具运行时<br/>Read、Edit、Bash、Grep、Agent、MCP"]
+  TOOLS --> STORE["持久化<br/>transcript、工具输出、任务输出"]
   STORE --> CTX
-  TOOLS --> TASKS["Task Runtime<br/>background shell/agent"]
-  TOOLS --> SUB["Subagent Runtime<br/>isolated context"]
+  TOOLS --> TASKS["任务运行时<br/>后台 shell / agent"]
+  TOOLS --> SUB["子 Agent 运行时<br/>隔离上下文"]
   SUB --> LOOP
   TASKS --> QE
 ```
-
-## 0.4 Minimal Data Flow
 
 每一轮 Agent turn 都按这个顺序执行，顺序不要打乱：
 
@@ -268,12 +195,8 @@ flowchart TD
 9. 状态写回 session。
 10. 如果还有工具结果，进入下一轮；否则结束。
 
-## 0.5 How To Use This Blueprint
-
 如果你要从零实现，不要从多 Agent 开始。按这个顺序做：
 
-| Stage | Build | Do Not Build Yet | Done When |
-|---:|---|---|---|
 | 1 | 单轮聊天 + streaming | 工具、记忆、多 Agent | 用户输入能得到流式回答 |
 | 2 | `Read/Grep/Glob` | 写文件、后台任务 | Agent 能自己查代码 |
 | 3 | `Bash/Edit/Write` + 权限 | 自动模式、复杂插件 | Agent 能安全改代码 |
@@ -283,12 +206,10 @@ flowchart TD
 | 7 | async task runtime | 远程 teammate | 后台任务可查、可停 |
 | 8 | named agents + worktrees | 自主 swarm | 多 Agent 不互相覆盖文件 |
 
-Architecture rule:
-
 ```text
-Single-agent reliability first.
-Multi-agent capability second.
-Autonomous swarm behavior last.
+先保证单 Agent 可靠。
+再扩展多 Agent 能力。
+最后才考虑自主集群行为。
 ```
 
 本规格书适合构建以下三类系统：
@@ -299,11 +220,7 @@ Autonomous swarm behavior last.
 
 它来自当前 Claude Code 源码快照里能观察到的架构模式，但写法是可复用实现规格，不是源码摘要。
 
-## 0.6 Drop-In Implementation Guide
-
 这一节是给“拿到文档就要开工的人”看的。先按这里做，不需要先读完整文档。
-
-### 0.6.1 Build Target
 
 第一版目标：
 
@@ -331,8 +248,6 @@ Autonomous swarm behavior last.
 - 长期向量记忆；
 - 自主循环调度。
 ```
-
-### 0.6.2 Project Skeleton
 
 直接按这个目录建项目：
 
@@ -406,12 +321,8 @@ agent-framework/
       verify.md
 ```
 
-### 0.6.3 Implementation Order
-
 按文件顺序实现：
 
-| Step | Files | Outcome |
-|---:|---|---|
 | 1 | `messages/Message.ts`, `runtime/events.ts` | 内部消息和事件类型固定 |
 | 2 | `model/ProviderAdapter.ts`, `model/ClaudeAdapter.ts` | 能流式调用模型 |
 | 3 | `runtime/queryLoop.ts` | 用户输入 -> 模型输出主循环跑通 |
@@ -424,8 +335,6 @@ agent-framework/
 | 10 | `context/*` | token 预算和 compact |
 | 11 | `tasks/*` | Bash 后台任务 |
 | 12 | `agents/*` | 多 Agent 扩展 |
-
-### 0.6.4 Copy-Paste Default Config
 
 把这份放到 `.agent/config.json`：
 
@@ -508,10 +417,6 @@ agent-framework/
 }
 ```
 
-### 0.6.5 Minimal Interfaces To Copy First
-
-Start with these types. Do not invent new shapes until these fail.
-
 ```ts
 export type Message =
   | UserMessage
@@ -582,8 +487,6 @@ export type QueryEvent =
   | { type: "done"; reason: TerminalReason }
 ```
 
-### 0.6.6 First Working Query Loop
-
 第一版主循环只需要这样：
 
 ```ts
@@ -633,66 +536,39 @@ export async function* queryLoop(params: QueryParams): AsyncGenerator<QueryEvent
 第二版再加：
 
 ```text
-- streaming tool execution；
-- reactive compact；
-- max_output_tokens recovery；
-- fallback model；
-- stop hooks；
-- background tasks；
-- subagents。
+- 工具流式执行；
+- 触发式上下文压缩；
+- max_output_tokens 恢复；
+- fallback model 降级；
+- 停止钩子；
+- 后台任务；
+- 子 Agent。
 ```
-
-### 0.6.7 Seven-Day Build Plan
 
 如果一个工程师全职做，按这个节奏：
 
-| Day | Build | Must Pass |
+| 天数 | 实现内容 | 验收结果 |
 |---:|---|---|
-| 1 | Message types, ProviderAdapter, streaming chat | 输入一句话能流式输出 |
-| 2 | Tool protocol, registry, Read/Grep/Glob | 模型能读文件、搜代码 |
-| 3 | Tool orchestration, pairing validator | 两个并发 Read 返回顺序正确 |
-| 4 | PermissionEngine, Bash/Edit/Write | Edit 未 Read 会失败；危险 Bash 会 ask |
-| 5 | TranscriptStore, ToolOutputStore | 进程重启能恢复；75k 输出会落盘 |
-| 6 | ContextManager, token budget, compact stub | 167k tokens 触发 compact |
-| 7 | AgentTool sync version, sidechain transcript | Explore Agent 能只读调查并返回 |
-
-### 0.6.8 Acceptance Tests
+| 1 | 消息类型、ProviderAdapter、流式模型调用 | 输入一句话能流式输出 |
+| 2 | 工具协议、工具注册表、Read / Grep / Glob | 模型能读文件、搜代码 |
+| 3 | 工具编排、工具配对校验器 | 两个并发 Read 返回顺序正确 |
+| 4 | PermissionEngine、Bash / Edit / Write | Edit 未 Read 会失败；危险 Bash 会要求确认 |
+| 5 | TranscriptStore、ToolOutputStore | 进程重启能恢复；75k 输出会落盘 |
+| 6 | ContextManager、token 预算、压缩占位实现 | 167k tokens 触发 compact |
+| 7 | AgentTool 同步版本、sidechain transcript | Explore Agent 能只读调查并返回 |
 
 项目交付前必须跑过这些：
 
-| Test | Exact Expected Result |
-|---|---|
-| Chat | User says "hi"; assistant streams text and ends with `done: completed` |
-| Read | Read a 1 KB file; full content appears in tool result |
-| Read cap | Read a file over `256 KB`; tool asks for `offset/limit` |
-| Grep | Grep without limit returns at most `250` matches |
-| Glob | Glob returns at most `100` paths |
-| Tool pair | Assistant emits 2 tool calls; transcript has 2 matching results |
-| Bash timeout | Command exceeds timeout; tool returns recoverable error |
-| Bash progress | Command running longer than `2_000 ms` emits progress |
-| Edit safety | Edit without prior Read fails |
-| Large output | Tool output `75_000 chars`; model sees preview and file path |
-| Abort | Abort during model stream; session ends without orphan tool_use |
-| Resume | Restart after user message persisted; session can continue |
-| Compact | Estimated input `167_000` on 200k model triggers compact |
-| Subagent | Explore agent has no Write tool and separate transcript |
-
-### 0.6.9 What To Hand To Another Developer
-
-Give them these deliverables:
-
 ```text
-1. This document.
-2. The project skeleton from 0.6.2.
-3. The default config from 0.6.4.
-4. The interfaces from 0.6.5.
-5. The seven-day build plan from 0.6.7.
-6. The acceptance tests from 0.6.8.
+1. 本文档。
+2. 0.6.2 的项目骨架。
+3. 0.6.4 的默认配置。
+4. 0.6.5 的接口定义。
+5. 0.6.7 的七天开发计划。
+6. 0.6.8 的验收测试。
 ```
 
-Tell them the first milestone is not "multi-agent". The first milestone is:
-
 ```text
-One reliable single-agent loop that can call tools, recover from failures,
-persist transcript, and never send invalid tool_use/tool_result pairs.
+一个可靠的单 Agent 主循环：能调用工具，能从失败中恢复，
+能持久化 transcript，并且永远不发送非法的 tool_use / tool_result 配对。
 ```
