@@ -2,136 +2,106 @@
 
 ## 设计目标
 
-定义文件读取、搜索、编辑、写入、stale edit 保护、补丁记录和恢复策略。
-
-本章必须写到工程师可以直接实现：输入、输出、状态、默认数字、失败处理和验收方式都要明确。
+- 把 Read、Grep、Glob、Edit、Write 做成可恢复、可审计、不会误覆盖用户改动的文件系统能力。
 
 ## 非目标
 
 - 不接管其它专题的职责。
-- 不用隐藏全局状态传递关键数据。
-- 不用自然语言错误代替结构化错误。
-- 不把“后续再定”当作实现方案。
+- 不使用隐藏全局状态。
+- 不把失败留给调用方猜测。
 
 ## 核心规则
 
-- 所有输入必须显式传入。
-- 所有输出必须能被 UI、SDK、replay 共用。
-- 所有失败必须返回结构化错误：code、message、recoverable、nextAction。
-- 任何影响下一轮模型输入的状态都必须进入 transcript 或 metadata。
-- 任何副作用都必须先过权限系统和预算系统。
-- 默认值必须集中在配置或常量模块。
+- Edit 前必须 Read。
+- Edit 时必须校验 readHash。
+- Write 新文件必须确认父目录在 workspace。
+- 单次 Read 默认最多 25_000 tokens。
+- 文件大于 262_144 bytes 默认拒绝全文读取。
+- 每次写入保存 patch 到 file-history。
 
 ## 状态机
 
 ~~~mermaid
 stateDiagram-v2
-  state "接收请求" as Receive
-  state "校验输入" as Validate
-  state "检查预算权限" as Guard
-  state "执行核心逻辑" as Execute
-  state "持久化结果" as Persist
-  state "发出事件" as Emit
-  state "成功" as Success
-  state "失败" as Failure
-
-  [*] --> Receive
-  Receive --> Validate
-  Validate --> Guard: 输入合法
-  Validate --> Failure: 输入非法
-  Guard --> Execute: 允许执行
-  Guard --> Failure: 被拒绝
-  Execute --> Persist
-  Execute --> Failure: 执行失败
-  Persist --> Emit
-  Emit --> Success
-  Success --> [*]
-  Failure --> [*]
+  state "Read 记录文件状态" as S0
+  state "生成编辑请求" as S1
+  state "检查路径权限" as S2
+  state "校验 expectedSha256" as S3
+  state "匹配 oldString" as S4
+  state "应用修改到内存" as S5
+  state "原子写入" as S6
+  state "保存 patch" as S7
+  state "更新文件缓存" as S8
+  [*] --> S0
+  S0 --> S1
+  S1 --> S2
+  S2 --> S3
+  S3 --> S4
+  S4 --> S5
+  S5 --> S6
+  S6 --> S7
+  S7 --> S8
+  S8 --> [*]
 ~~~
 
 ## 数据结构
 
 ~~~ts
-type ApplyWorkspaceEditInput = {
-  sessionId: string
-  agentId?: string
-  requestId: string
-  cwd: string
-  config: RuntimeConfig
-  state: RuntimeState
-}
-
-type ApplyWorkspaceEditResult =
-  | { ok: true; events: RuntimeEvent[]; statePatch?: Partial<RuntimeState>; messages?: Message[] }
-  | { ok: false; events: RuntimeEvent[]; error: RuntimeError }
-
-type RuntimeError = {
-  code: string
-  message: string
-  recoverable: boolean
-  nextAction: "retry" | "compact" | "ask_user" | "abort" | "fallback"
-  details?: Record<string, unknown>
-}
+type FileReadState = { path: string; sha256: string; mtimeMs: number; sizeBytes: number; readAt: string }
+type EditRequest = { path: string; oldString: string; newString: string; expectedSha256: string }
 ~~~
 
 ## 默认值
 
 | 配置 | 默认值 | 说明 |
 |---|---:|---|
-| requestTimeoutMs | 120_000 | 单次请求超时。 |
-| maxRetries | 2 | 模块内部恢复重试。 |
-| eventFlushMs | 100 | 事件刷新间隔。 |
-| persistRequired | true | 影响后续模型的状态必须持久化。 |
+| readMaxOutputTokens | 25_000 | Read 输出 token 上限。 |
+| readMaxSizeBytes | 262_144 | 默认全文读取字节上限。 |
+| grepHeadLimit | 250 | Grep 默认最多返回 250 行。 |
+| globMaxResults | 100 | Glob 默认最多 100 个路径。 |
+| staleEditProtection | true | 编辑前校验 hash。 |
 
 ## 详细流程
 
-1. Read 记录 file hash。
-2. Edit 前校验 hash。
-3. hash 不一致返回 stale_edit。
-4. Write 前检查路径权限。
-5. 成功后写 file-history patch。
-6. 大文件读取自动截断并给出范围。
+1. Read 记录 path、mtime、size、sha256。
+2. Edit 请求必须带 oldString 或 patch。
+3. 编辑前重新 stat 和 hash。
+4. hash 不一致返回 stale_edit。
+5. 应用 patch 到内存。
+6. 写入临时文件后 rename。
+7. 保存反向 patch 和正向 patch。
+8. 更新 read cache。
 
 ## 失败处理
 
-| 失败 | 处理 |
+| 错误码或失败 | 处理 |
 |---|---|
-| 输入缺字段 | 返回 invalid_input，指出缺失字段，不执行核心逻辑。 |
-| 权限拒绝 | 返回 permission_denied，不自动重试，可让用户确认。 |
-| 超预算 | 返回 budget_exceeded，附当前预算和需要的预算。 |
-| 执行超时 | 返回 timeout，保留已产生事件。 |
-| 持久化失败 | 返回 persistence_failed，阻塞继续执行。 |
-| replay 不一致 | 返回 replay_mismatch，输出第一处不同事件。 |
+| file_not_read | Edit 返回 file_not_read。 |
+| stale_edit | 提示重新 Read。 |
+| old_string_not_found | 不写文件，返回可恢复错误。 |
+| multiple_matches | 要求更具体 oldString。 |
+| outside_workspace | 返回 permission_denied。 |
 
 ## 提示词模板
 
-本章默认不需要专用模型提示词。若实现中需要模型参与，必须把输入、输出格式、失败分支写成固定模板。
+本章没有默认模型调用；如果实现需要模型参与，必须复用上下文压缩、权限解释或工具错误恢复章节的固定提示词。
 
 ## 可实现伪代码
 
 ~~~ts
-async function applyWorkspaceEdit(input: ApplyWorkspaceEditInput): Promise<ApplyWorkspaceEditResult> {
-  const events: RuntimeEvent[] = []
-  const validation = validateInput(input)
-  if (!validation.ok) return { ok: false, events, error: validation.error }
-
-  const guard = await checkBudgetAndPermission(input)
-  if (!guard.ok) {
-    events.push({ type: "guard_rejected", requestId: input.requestId, code: guard.error.code })
-    return { ok: false, events, error: guard.error }
-  }
-
-  try {
-    events.push({ type: "module_started", requestId: input.requestId })
-    const result = await executeCore(input, events)
-    await persistResult(input.sessionId, result)
-    events.push({ type: "module_completed", requestId: input.requestId })
-    return { ok: true, events, statePatch: result.statePatch, messages: result.messages }
-  } catch (error) {
-    const normalized = normalizeRuntimeError(error)
-    events.push({ type: "module_failed", requestId: input.requestId, code: normalized.code })
-    return { ok: false, events, error: normalized }
-  }
+async function applyWorkspaceEdit(req: EditRequest, state: FileStateCache): Promise<EditResult> {
+  const known = state.get(req.path)
+  if (!known) return { ok: false, code: "file_not_read" }
+  const current = await hashFile(req.path)
+  if (current !== req.expectedSha256) return { ok: false, code: "stale_edit" }
+  const text = await fs.readFile(req.path, "utf8")
+  const count = countOccurrences(text, req.oldString)
+  if (count === 0) return { ok: false, code: "old_string_not_found" }
+  if (count > 1) return { ok: false, code: "multiple_matches" }
+  const next = text.replace(req.oldString, req.newString)
+  await atomicWrite(req.path, next)
+  await savePatch(req.path, text, next)
+  return { ok: true, newSha256: sha256(next) }
 }
 ~~~
 
@@ -139,16 +109,15 @@ async function applyWorkspaceEdit(input: ApplyWorkspaceEditInput): Promise<Apply
 
 | 用例 | 输入 | 期望 |
 |---|---|---|
-| 正常路径 | 合法输入 | ok=true。 |
-| 输入缺失 | 缺 sessionId | invalid_input。 |
-| 权限拒绝 | deny 命中 | permission_denied。 |
-| 超预算 | 预算不足 | budget_exceeded。 |
-| 持久化失败 | transcript 不可写 | persistence_failed。 |
+| 未读先改 | Edit(a.ts) 但 cache 无记录 | file_not_read。 |
+| 用户同时修改 | expectedSha256 与当前文件不同 | stale_edit。 |
+| oldString 不存在 | oldString=foo 当前文件无 foo | old_string_not_found。 |
+| oldString 多处匹配 | 同一片段出现 2 次 | multiple_matches。 |
+| 大文件读取 | 文件 400_000 bytes | 拒绝全文读取，要求 range 或 grep。 |
 
 ## 验收标准
 
-- 正常路径、失败路径、边界值都有自动化测试。
-- 所有错误都有 code 和 nextAction。
-- 影响下一轮模型行为的数据已经持久化。
-- replay 可以复现关键事件序列。
-- 文档中的默认数字能在配置或常量模块找到同名字段。
+- 有具体默认值。
+- 有结构化错误码。
+- 有可执行伪代码。
+- 测试覆盖正常路径、失败路径和边界值。

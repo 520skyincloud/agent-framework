@@ -2,75 +2,68 @@
 
 ## 设计目标
 
-定义内部消息、provider 消息、工具配对、JSONL transcript、修复消息和恢复校验。
-
-本章必须写到工程师可以直接实现：输入、输出、状态、默认数字、失败处理和验收方式都要明确。
+- 定义内部消息格式和 provider 消息格式的转换边界。
+- 让 transcript 成为恢复和回放的事实来源。
+- 保证 tool_use 与 tool_result 永远可校验。
 
 ## 非目标
 
-- 不接管其它专题的职责。
-- 不用隐藏全局状态传递关键数据。
-- 不用自然语言错误代替结构化错误。
-- 不把“后续再定”当作实现方案。
+- 不把 UI 临时状态写入 transcript。
+- 不把大型工具输出全文塞进主 transcript。
+- 不在消息层决定模型重试。
 
 ## 核心规则
 
-- 所有输入必须显式传入。
-- 所有输出必须能被 UI、SDK、replay 共用。
-- 所有失败必须返回结构化错误：code、message、recoverable、nextAction。
-- 任何影响下一轮模型输入的状态都必须进入 transcript 或 metadata。
-- 任何副作用都必须先过权限系统和预算系统。
-- 默认值必须集中在配置或常量模块。
+- transcript 只能 append-only。
+- 每条记录必须有 sequence、messageId、sha256。
+- assistant 内多个 tool_use 的结果必须按原顺序追加。
+- 工具输出超过 50_000 字符时落盘。
+- 恢复时发现损坏，只能追加 repair message，不改旧记录。
 
 ## 状态机
 
 ~~~mermaid
 stateDiagram-v2
-  state "接收请求" as Receive
-  state "校验输入" as Validate
-  state "检查预算权限" as Guard
-  state "执行核心逻辑" as Execute
-  state "持久化结果" as Persist
-  state "发出事件" as Emit
-  state "成功" as Success
-  state "失败" as Failure
-
-  [*] --> Receive
-  Receive --> Validate
-  Validate --> Guard: 输入合法
-  Validate --> Failure: 输入非法
-  Guard --> Execute: 允许执行
-  Guard --> Failure: 被拒绝
-  Execute --> Persist
-  Execute --> Failure: 执行失败
-  Persist --> Emit
-  Emit --> Success
-  Success --> [*]
-  Failure --> [*]
+  state "追加消息" as S0
+  state "计算 hash" as S1
+  state "刷新到磁盘" as S2
+  state "校验 sequence" as S3
+  state "校验 tool 配对" as S4
+  state "发现损坏" as S5
+  state "追加修复消息" as S6
+  state "恢复完成" as S7
+  [*] --> S0
+  S0 --> S1
+  S1 --> S2
+  S2 --> S3
+  S3 --> S4
+  S4 --> S5
+  S5 --> S6
+  S6 --> S7
+  S7 --> [*]
 ~~~
 
 ## 数据结构
 
 ~~~ts
-type ValidateTranscriptInput = {
+type TranscriptRecord = {
+  version: 1
   sessionId: string
-  agentId?: string
-  requestId: string
-  cwd: string
-  config: RuntimeConfig
-  state: RuntimeState
+  sequence: number
+  messageId: string
+  message: Message
+  sha256: string
+  writtenAt: string
 }
 
-type ValidateTranscriptResult =
-  | { ok: true; events: RuntimeEvent[]; statePatch?: Partial<RuntimeState>; messages?: Message[] }
-  | { ok: false; events: RuntimeEvent[]; error: RuntimeError }
+type Message = UserMessage | AssistantMessage | ToolResultMessage | SystemRepairMessage
 
-type RuntimeError = {
-  code: string
-  message: string
-  recoverable: boolean
-  nextAction: "retry" | "compact" | "ask_user" | "abort" | "fallback"
-  details?: Record<string, unknown>
+type ToolResultMessage = {
+  id: string
+  role: "tool"
+  toolUseId: string
+  isError: boolean
+  content: Array<{ type: "text"; text: string } | { type: "external"; path: string; preview: string }>
 }
 ~~~
 
@@ -78,59 +71,61 @@ type RuntimeError = {
 
 | 配置 | 默认值 | 说明 |
 |---|---:|---|
-| requestTimeoutMs | 120_000 | 单次请求超时。 |
-| maxRetries | 2 | 模块内部恢复重试。 |
-| eventFlushMs | 100 | 事件刷新间隔。 |
-| persistRequired | true | 影响后续模型的状态必须持久化。 |
+| transcriptVersion | 1 | 当前 JSONL record 版本。 |
+| maxInlineToolResultChars | 50_000 | 超过后写外部文件。 |
+| fsyncEveryRecords | 1 | 第一版每条消息落盘。 |
+| repairMessageRole | system | 修复记录用 system repair message。 |
+| hashAlgorithm | sha256 | 校验 transcript record。 |
 
 ## 详细流程
 
-1. 为每条消息生成 id、role、createdAt。
-2. assistant 写入后检查 tool_use。
-3. tool_result 按 tool_use 原始顺序追加。
-4. 大输出落盘，transcript 只保留摘要。
-5. 恢复时校验 hash、顺序和配对。
+1. append 前根据当前文件尾部 sequence 生成下一序号。
+2. 序列化 message，计算 sha256。
+3. 写入 JSONL 单行，立刻 flush。
+4. 如果是 assistant，提取 tool_use 顺序写入 metadata.pendingToolUses。
+5. 如果是 tool_result，必须匹配 pendingToolUses[0]。
+6. 工具输出过大时先写 tool-results 文件，再写 external 引用。
+7. resume 时从头读取 JSONL，验证 sequence 连续和 hash 正确。
+8. 发现最后一行半写入时丢弃最后一行并追加 repair message。
 
 ## 失败处理
 
-| 失败 | 处理 |
+| 错误码或失败 | 处理 |
 |---|---|
-| 输入缺字段 | 返回 invalid_input，指出缺失字段，不执行核心逻辑。 |
-| 权限拒绝 | 返回 permission_denied，不自动重试，可让用户确认。 |
-| 超预算 | 返回 budget_exceeded，附当前预算和需要的预算。 |
-| 执行超时 | 返回 timeout，保留已产生事件。 |
-| 持久化失败 | 返回 persistence_failed，阻塞继续执行。 |
-| replay 不一致 | 返回 replay_mismatch，输出第一处不同事件。 |
+| hash_mismatch | 阻塞自动恢复，要求用户确认是否信任。 |
+| sequence_gap | 从缺口处停止恢复，追加 repair message。 |
+| missing_tool_result | 合成错误 tool_result，内容说明工具结果丢失。 |
+| external_output_missing | 保留 preview，标记 missingExternalOutput=true。 |
+| json_parse_last_line_failed | 丢弃最后一行，其它行继续恢复。 |
 
 ## 提示词模板
 
-本章默认不需要专用模型提示词。若实现中需要模型参与，必须把输入、输出格式、失败分支写成固定模板。
+本章不使用模型提示词；损坏修复由确定性 repair message 完成。
 
 ## 可实现伪代码
 
 ~~~ts
-async function validateTranscript(input: ValidateTranscriptInput): Promise<ValidateTranscriptResult> {
-  const events: RuntimeEvent[] = []
-  const validation = validateInput(input)
-  if (!validation.ok) return { ok: false, events, error: validation.error }
+function validateTranscript(records: TranscriptRecord[]): TranscriptValidationResult {
+  const pending: string[] = []
+  for (let i = 0; i < records.length; i++) {
+    const record = records[i]
+    if (record.sequence !== i + 1) return { ok: false, code: "sequence_gap", index: i }
+    if (sha256(record.message) !== record.sha256) return { ok: false, code: "hash_mismatch", index: i }
 
-  const guard = await checkBudgetAndPermission(input)
-  if (!guard.ok) {
-    events.push({ type: "guard_rejected", requestId: input.requestId, code: guard.error.code })
-    return { ok: false, events, error: guard.error }
-  }
+    if (record.message.role === "assistant") {
+      for (const block of record.message.content) {
+        if (block.type === "tool_use") pending.push(block.id)
+      }
+    }
 
-  try {
-    events.push({ type: "module_started", requestId: input.requestId })
-    const result = await executeCore(input, events)
-    await persistResult(input.sessionId, result)
-    events.push({ type: "module_completed", requestId: input.requestId })
-    return { ok: true, events, statePatch: result.statePatch, messages: result.messages }
-  } catch (error) {
-    const normalized = normalizeRuntimeError(error)
-    events.push({ type: "module_failed", requestId: input.requestId, code: normalized.code })
-    return { ok: false, events, error: normalized }
+    if (record.message.role === "tool") {
+      const expected = pending.shift()
+      if (!expected) return { ok: false, code: "orphan_tool_result", index: i }
+      if (expected !== record.message.toolUseId) return { ok: false, code: "tool_order_mismatch", expected, actual: record.message.toolUseId }
+    }
   }
+  if (pending.length) return { ok: false, code: "missing_tool_result", pending }
+  return { ok: true }
 }
 ~~~
 
@@ -138,16 +133,14 @@ async function validateTranscript(input: ValidateTranscriptInput): Promise<Valid
 
 | 用例 | 输入 | 期望 |
 |---|---|---|
-| 正常路径 | 合法输入 | ok=true。 |
-| 输入缺失 | 缺 sessionId | invalid_input。 |
-| 权限拒绝 | deny 命中 | permission_denied。 |
-| 超预算 | 预算不足 | budget_exceeded。 |
-| 持久化失败 | transcript 不可写 | persistence_failed。 |
+| 顺序正确 | assistant(toolu_1,toolu_2) 后接两个结果 | 校验通过。 |
+| 结果错序 | toolu_2 在 toolu_1 前 | tool_order_mismatch。 |
+| 缺结果 | assistant 后无 tool_result | missing_tool_result。 |
+| 大输出 | 工具输出 80_000 字符 | 主 transcript 只有 external 引用。 |
 
 ## 验收标准
 
-- 正常路径、失败路径、边界值都有自动化测试。
-- 所有错误都有 code 和 nextAction。
-- 影响下一轮模型行为的数据已经持久化。
-- replay 可以复现关键事件序列。
-- 文档中的默认数字能在配置或常量模块找到同名字段。
+- transcript 可完整恢复为 provider 输入。
+- 损坏时有 repair message。
+- 大输出不会进入主上下文。
+- 配对校验是确定性的。

@@ -2,137 +2,107 @@
 
 ## 设计目标
 
-在 Bash、Edit、Write、网络、MCP 等副作用执行前做 allow、deny、ask、sandbox 和审计。
-
-本章必须写到工程师可以直接实现：输入、输出、状态、默认数字、失败处理和验收方式都要明确。
+- 在所有副作用执行前做确定性权限决策，并记录审计。
 
 ## 非目标
 
 - 不接管其它专题的职责。
-- 不用隐藏全局状态传递关键数据。
-- 不用自然语言错误代替结构化错误。
-- 不把“后续再定”当作实现方案。
+- 不使用隐藏全局状态。
+- 不把失败留给调用方猜测。
 
 ## 核心规则
 
-- 所有输入必须显式传入。
-- 所有输出必须能被 UI、SDK、replay 共用。
-- 所有失败必须返回结构化错误：code、message、recoverable、nextAction。
-- 任何影响下一轮模型输入的状态都必须进入 transcript 或 metadata。
-- 任何副作用都必须先过权限系统和预算系统。
-- 默认值必须集中在配置或常量模块。
+- hard deny 优先级最高。
+- 显式 deny 高于 allow。
+- Edit/Write 必须限制在 workspace 内。
+- Bash 危险命令默认 ask 或 deny。
+- MCP 工具按 mcp__server__tool 命名空间授权。
+- 每次 ask/allow/deny 都写 audit。
 
 ## 状态机
 
 ~~~mermaid
 stateDiagram-v2
-  state "接收请求" as Receive
-  state "校验输入" as Validate
-  state "检查预算权限" as Guard
-  state "执行核心逻辑" as Execute
-  state "持久化结果" as Persist
-  state "发出事件" as Emit
-  state "成功" as Success
-  state "失败" as Failure
-
-  [*] --> Receive
-  Receive --> Validate
-  Validate --> Guard: 输入合法
-  Validate --> Failure: 输入非法
-  Guard --> Execute: 允许执行
-  Guard --> Failure: 被拒绝
-  Execute --> Persist
-  Execute --> Failure: 执行失败
-  Persist --> Emit
-  Emit --> Success
-  Success --> [*]
-  Failure --> [*]
+  state "接收权限请求" as S0
+  state "hard deny 检查" as S1
+  state "显式 deny 匹配" as S2
+  state "显式 allow 匹配" as S3
+  state "工具安全检查" as S4
+  state "hook 或 classifier" as S5
+  state "用户确认" as S6
+  state "写审计" as S7
+  state "返回决策" as S8
+  [*] --> S0
+  S0 --> S1
+  S1 --> S2
+  S2 --> S3
+  S3 --> S4
+  S4 --> S5
+  S5 --> S6
+  S6 --> S7
+  S7 --> S8
+  S8 --> [*]
 ~~~
 
 ## 数据结构
 
 ~~~ts
-type DecidePermissionInput = {
-  sessionId: string
-  agentId?: string
-  requestId: string
-  cwd: string
-  config: RuntimeConfig
-  state: RuntimeState
-}
-
-type DecidePermissionResult =
-  | { ok: true; events: RuntimeEvent[]; statePatch?: Partial<RuntimeState>; messages?: Message[] }
-  | { ok: false; events: RuntimeEvent[]; error: RuntimeError }
-
-type RuntimeError = {
-  code: string
-  message: string
-  recoverable: boolean
-  nextAction: "retry" | "compact" | "ask_user" | "abort" | "fallback"
-  details?: Record<string, unknown>
-}
+type PermissionDecision = { decision: "allow" | "deny" | "ask"; reason: string; ruleId?: string; expiresAt?: string }
+type PermissionAuditRecord = { sessionId: string; toolUseId: string; toolName: string; decision: string; inputSummary: string; cwd: string; createdAt: string }
 ~~~
 
 ## 默认值
 
 | 配置 | 默认值 | 说明 |
 |---|---:|---|
-| requestTimeoutMs | 120_000 | 单次请求超时。 |
-| maxRetries | 2 | 模块内部恢复重试。 |
-| eventFlushMs | 100 | 事件刷新间隔。 |
-| persistRequired | true | 影响后续模型的状态必须持久化。 |
+| permissionMode | ask | 默认需要用户确认副作用。 |
+| allowTTLSeconds | 3_600 | 用户本次允许的有效期。 |
+| auditRetentionDays | 30 | 权限审计保留天数。 |
+| dangerousBashAsk | true | 危险 bash 默认询问。 |
+| outsideWorkspaceWrite | deny | 工作区外写入默认拒绝。 |
 
 ## 详细流程
 
-1. 先 hard deny。
-2. 再 explicit deny。
-3. 再 explicit allow。
-4. 再工具安全检查。
-5. 再 hook 或 classifier。
-6. 需要用户确认时返回 ask。
-7. 所有决策写 audit。
+1. 检查 hard deny：删除根目录、读取 secret、写系统目录。
+2. 匹配 deny rules。
+3. 匹配 allow rules。
+4. 调用工具专属 safety。
+5. 调用 hook 或 classifier。
+6. 如果仍不确定，返回 ask。
+7. 写 PermissionAuditRecord。
 
 ## 失败处理
 
-| 失败 | 处理 |
+| 错误码或失败 | 处理 |
 |---|---|
-| 输入缺字段 | 返回 invalid_input，指出缺失字段，不执行核心逻辑。 |
-| 权限拒绝 | 返回 permission_denied，不自动重试，可让用户确认。 |
-| 超预算 | 返回 budget_exceeded，附当前预算和需要的预算。 |
-| 执行超时 | 返回 timeout，保留已产生事件。 |
-| 持久化失败 | 返回 persistence_failed，阻塞继续执行。 |
-| replay 不一致 | 返回 replay_mismatch，输出第一处不同事件。 |
+| secret_detected | deny，并隐藏具体 secret。 |
+| outside_workspace | 拒绝。 |
+| ambiguous_bash | 询问用户。 |
+| noninteractive_ask | deny，非交互无法询问。 |
+| audit_write_failed | 允许结果不生效，返回 permission_audit_failed。 |
 
 ## 提示词模板
 
-本章默认不需要专用模型提示词。若实现中需要模型参与，必须把输入、输出格式、失败分支写成固定模板。
+### 权限解释提示词
+
+~~~text
+你是权限解释器。请用简短中文解释为什么这个工具调用需要允许、被拒绝或需要用户确认。
+必须包含：工具名、目标资源、风险、如果允许会发生什么、如果拒绝会怎样继续。
+不要泄露 secret 原文。不要夸大风险。不要替用户做授权决定。
+~~~
 
 ## 可实现伪代码
 
 ~~~ts
-async function decidePermission(input: DecidePermissionInput): Promise<DecidePermissionResult> {
-  const events: RuntimeEvent[] = []
-  const validation = validateInput(input)
-  if (!validation.ok) return { ok: false, events, error: validation.error }
-
-  const guard = await checkBudgetAndPermission(input)
-  if (!guard.ok) {
-    events.push({ type: "guard_rejected", requestId: input.requestId, code: guard.error.code })
-    return { ok: false, events, error: guard.error }
-  }
-
-  try {
-    events.push({ type: "module_started", requestId: input.requestId })
-    const result = await executeCore(input, events)
-    await persistResult(input.sessionId, result)
-    events.push({ type: "module_completed", requestId: input.requestId })
-    return { ok: true, events, statePatch: result.statePatch, messages: result.messages }
-  } catch (error) {
-    const normalized = normalizeRuntimeError(error)
-    events.push({ type: "module_failed", requestId: input.requestId, code: normalized.code })
-    return { ok: false, events, error: normalized }
-  }
+async function decidePermission(req: PermissionRequest): Promise<PermissionDecision> {
+  if (matchesHardDeny(req)) return audit(req, { decision: "deny", reason: "hard_deny" })
+  const deny = matchRule(req, req.rules.deny)
+  if (deny) return audit(req, { decision: "deny", reason: "explicit_deny", ruleId: deny.id })
+  const allow = matchRule(req, req.rules.allow)
+  if (allow && toolSafety(req).safe) return audit(req, { decision: "allow", reason: "explicit_allow", ruleId: allow.id })
+  const safety = toolSafety(req)
+  if (!safety.safe) return audit(req, { decision: safety.askable ? "ask" : "deny", reason: safety.reason })
+  return audit(req, { decision: "ask", reason: "no_matching_rule" })
 }
 ~~~
 
@@ -140,16 +110,15 @@ async function decidePermission(input: DecidePermissionInput): Promise<DecidePer
 
 | 用例 | 输入 | 期望 |
 |---|---|---|
-| 正常路径 | 合法输入 | ok=true。 |
-| 输入缺失 | 缺 sessionId | invalid_input。 |
-| 权限拒绝 | deny 命中 | permission_denied。 |
-| 超预算 | 预算不足 | budget_exceeded。 |
-| 持久化失败 | transcript 不可写 | persistence_failed。 |
+| 硬拒绝 | Bash(rm -rf /) | deny，reason=hard_deny。 |
+| 工作区外写 | Write(/etc/hosts) | deny，reason=outside_workspace。 |
+| 明确允许 | Read(/project/src/a.ts) 命中 allow | allow，并写 audit。 |
+| 非交互 ask | Bash(npm install) 需要询问但 nonInteractive=true | deny，reason=noninteractive_ask。 |
+| MCP 授权 | mcp__github__create_issue 未在 allow | ask 或 deny，不直接执行。 |
 
 ## 验收标准
 
-- 正常路径、失败路径、边界值都有自动化测试。
-- 所有错误都有 code 和 nextAction。
-- 影响下一轮模型行为的数据已经持久化。
-- replay 可以复现关键事件序列。
-- 文档中的默认数字能在配置或常量模块找到同名字段。
+- 有具体默认值。
+- 有结构化错误码。
+- 有可执行伪代码。
+- 测试覆盖正常路径、失败路径和边界值。

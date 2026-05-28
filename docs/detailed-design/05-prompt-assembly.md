@@ -2,137 +2,104 @@
 
 ## 设计目标
 
-把系统提示词、工具 schema、记忆、项目指令、压缩摘要和最近消息组装成 provider 输入。
-
-本章必须写到工程师可以直接实现：输入、输出、状态、默认数字、失败处理和验收方式都要明确。
+- 组装 provider 请求，确保内容顺序、预算裁剪和工具 schema 都确定。
+- 把上下文预算结果转成可发送的消息数组。
 
 ## 非目标
 
 - 不接管其它专题的职责。
-- 不用隐藏全局状态传递关键数据。
-- 不用自然语言错误代替结构化错误。
-- 不把“后续再定”当作实现方案。
+- 不使用隐藏全局状态。
+- 不把失败留给调用方猜测。
 
 ## 核心规则
 
-- 所有输入必须显式传入。
-- 所有输出必须能被 UI、SDK、replay 共用。
-- 所有失败必须返回结构化错误：code、message、recoverable、nextAction。
-- 任何影响下一轮模型输入的状态都必须进入 transcript 或 metadata。
-- 任何副作用都必须先过权限系统和预算系统。
-- 默认值必须集中在配置或常量模块。
+- 系统提示词永远第一。
+- 必须工具 schema 永远保留；可选工具 schema 可裁剪。
+- 最新用户消息永远保留。
+- compact summary 放在历史消息之前。
+- 每次组装必须输出 tokenBreakdown。
+- 超预算时裁剪顺序固定：可选工具、低相关记忆、旧工具结果、旧消息。
 
 ## 状态机
 
 ~~~mermaid
 stateDiagram-v2
-  state "接收请求" as Receive
-  state "校验输入" as Validate
-  state "检查预算权限" as Guard
-  state "执行核心逻辑" as Execute
-  state "持久化结果" as Persist
-  state "发出事件" as Emit
-  state "成功" as Success
-  state "失败" as Failure
-
-  [*] --> Receive
-  Receive --> Validate
-  Validate --> Guard: 输入合法
-  Validate --> Failure: 输入非法
-  Guard --> Execute: 允许执行
-  Guard --> Failure: 被拒绝
-  Execute --> Persist
-  Execute --> Failure: 执行失败
-  Persist --> Emit
-  Emit --> Success
-  Success --> [*]
-  Failure --> [*]
+  state "接收组装请求" as S0
+  state "计算有效窗口" as S1
+  state "加入系统提示词" as S2
+  state "加入必需工具" as S3
+  state "加入压缩摘要" as S4
+  state "加入记忆和项目指令" as S5
+  state "加入最近消息" as S6
+  state "按顺序裁剪" as S7
+  state "输出 provider 请求或 compact 决策" as S8
+  [*] --> S0
+  S0 --> S1
+  S1 --> S2
+  S2 --> S3
+  S3 --> S4
+  S4 --> S5
+  S5 --> S6
+  S6 --> S7
+  S7 --> S8
+  S8 --> [*]
 ~~~
 
 ## 数据结构
 
 ~~~ts
-type AssemblePromptInput = {
-  sessionId: string
-  agentId?: string
-  requestId: string
-  cwd: string
-  config: RuntimeConfig
-  state: RuntimeState
-}
-
-type AssemblePromptResult =
-  | { ok: true; events: RuntimeEvent[]; statePatch?: Partial<RuntimeState>; messages?: Message[] }
-  | { ok: false; events: RuntimeEvent[]; error: RuntimeError }
-
-type RuntimeError = {
-  code: string
-  message: string
-  recoverable: boolean
-  nextAction: "retry" | "compact" | "ask_user" | "abort" | "fallback"
-  details?: Record<string, unknown>
-}
+type PromptAssemblyResult = { providerMessages: ProviderMessage[]; tokenBreakdown: Record<string, number>; dropped: DroppedContextItem[]; decision: "send" | "compact" | "block" }
 ~~~
 
 ## 默认值
 
 | 配置 | 默认值 | 说明 |
 |---|---:|---|
-| requestTimeoutMs | 120_000 | 单次请求超时。 |
-| maxRetries | 2 | 模块内部恢复重试。 |
-| eventFlushMs | 100 | 事件刷新间隔。 |
-| persistRequired | true | 影响后续模型的状态必须持久化。 |
+| systemPromptReserve | 4_000 | 系统提示词预算。 |
+| toolSchemaReserve | 30_000 | 工具 schema 默认预算。 |
+| memoryReserve | 8_000 | 记忆预算。 |
+| projectInstructionReserve | 12_000 | 项目指令预算。 |
+| recentMessageMinReserve | 40_000 | 最近消息最低保留预算。 |
+| maxOptionalToolSchemas | 32 | 可选工具 schema 最多注入数量。 |
 
 ## 详细流程
 
-1. 放入系统提示词。
-2. 放入必须工具 schema。
-3. 放入最新 compact summary。
-4. 放入记忆和项目指令。
-5. 从新到旧放入最近消息。
-6. 超预算时删可选 schema。
-7. 仍超预算则触发 compact。
+1. 读取模型预算 effectiveWindow。
+2. 加入 system prompt。
+3. 加入强制工具 schema：Read、Grep、Glob、Bash、Edit、Write、TodoWrite。
+4. 加入 latest compact summary。
+5. 按相关度加入记忆，最多 8_000 tokens。
+6. 加入项目指令，最多 12_000 tokens。
+7. 从新到旧加入消息，遇到大工具结果用 external marker。
+8. 超预算时按固定顺序裁剪；仍超预算则返回 need_compact。
 
 ## 失败处理
 
-| 失败 | 处理 |
+| 错误码或失败 | 处理 |
 |---|---|
-| 输入缺字段 | 返回 invalid_input，指出缺失字段，不执行核心逻辑。 |
-| 权限拒绝 | 返回 permission_denied，不自动重试，可让用户确认。 |
-| 超预算 | 返回 budget_exceeded，附当前预算和需要的预算。 |
-| 执行超时 | 返回 timeout，保留已产生事件。 |
-| 持久化失败 | 返回 persistence_failed，阻塞继续执行。 |
-| replay 不一致 | 返回 replay_mismatch，输出第一处不同事件。 |
+| missing_system_prompt | 失败，不能调用模型。 |
+| tool_schema_too_large | 裁剪可选工具；必需工具仍超限则 block。 |
+| latest_user_message_too_large | 先 microcompact 附件或要求用户拆分。 |
+| prompt_still_too_large | 返回 need_compact。 |
 
 ## 提示词模板
 
-本章默认不需要专用模型提示词。若实现中需要模型参与，必须把输入、输出格式、失败分支写成固定模板。
+本章没有默认模型调用；如果实现需要模型参与，必须复用上下文压缩、权限解释或工具错误恢复章节的固定提示词。
 
 ## 可实现伪代码
 
 ~~~ts
-async function assemblePrompt(input: AssemblePromptInput): Promise<AssemblePromptResult> {
-  const events: RuntimeEvent[] = []
-  const validation = validateInput(input)
-  if (!validation.ok) return { ok: false, events, error: validation.error }
-
-  const guard = await checkBudgetAndPermission(input)
-  if (!guard.ok) {
-    events.push({ type: "guard_rejected", requestId: input.requestId, code: guard.error.code })
-    return { ok: false, events, error: guard.error }
-  }
-
-  try {
-    events.push({ type: "module_started", requestId: input.requestId })
-    const result = await executeCore(input, events)
-    await persistResult(input.sessionId, result)
-    events.push({ type: "module_completed", requestId: input.requestId })
-    return { ok: true, events, statePatch: result.statePatch, messages: result.messages }
-  } catch (error) {
-    const normalized = normalizeRuntimeError(error)
-    events.push({ type: "module_failed", requestId: input.requestId, code: normalized.code })
-    return { ok: false, events, error: normalized }
-  }
+function assemblePrompt(input: PromptAssemblyInput): PromptAssemblyResult {
+  const b = new PromptBuilder(input.effectiveWindow)
+  b.mustAdd("system", input.systemPrompt, 4_000)
+  b.mustAdd("tools.required", requiredToolSchemas(input.tools), 30_000)
+  b.tryAdd("compact", input.latestCompactSummary, 20_000)
+  b.tryAddRanked("memory", input.memories, 8_000)
+  b.tryAdd("project", input.projectInstructions, 12_000)
+  b.addRecentMessagesNewestFirst(input.messages, { minReserve: 40_000, externalizeToolResults: true })
+  if (b.overBudget()) b.dropInOrder(["tools.optional", "memory.low", "toolResults.old", "messages.old"])
+  if (b.overBudget()) return b.result("compact")
+  return b.result("send")
 }
 ~~~
 
@@ -140,16 +107,15 @@ async function assemblePrompt(input: AssemblePromptInput): Promise<AssemblePromp
 
 | 用例 | 输入 | 期望 |
 |---|---|---|
-| 正常路径 | 合法输入 | ok=true。 |
-| 输入缺失 | 缺 sessionId | invalid_input。 |
-| 权限拒绝 | deny 命中 | permission_denied。 |
-| 超预算 | 预算不足 | budget_exceeded。 |
-| 持久化失败 | transcript 不可写 | persistence_failed。 |
+| 必需工具保留 | 工具 schema 总量 35_000 tokens，其中必需 28_000 | 保留必需工具，裁剪可选工具。 |
+| 最新用户消息过大 | latest user message 60_000 tokens | 返回 latest_user_message_too_large，不丢弃最新用户消息。 |
+| 记忆超预算 | 记忆候选 30 条共 20_000 tokens | 按相关度截断到 8_000 tokens。 |
+| 仍然超预算 | 裁剪可选工具、低相关记忆、旧工具结果后仍超 effectiveWindow | 返回 decision=compact。 |
+| 大工具结果 | 历史中有 80_000 字符 tool_result | 替换成 external marker，tokenBreakdown 记录 toolResults.externalized。 |
 
 ## 验收标准
 
-- 正常路径、失败路径、边界值都有自动化测试。
-- 所有错误都有 code 和 nextAction。
-- 影响下一轮模型行为的数据已经持久化。
-- replay 可以复现关键事件序列。
-- 文档中的默认数字能在配置或常量模块找到同名字段。
+- 有具体默认值。
+- 有结构化错误码。
+- 有可执行伪代码。
+- 测试覆盖正常路径、失败路径和边界值。

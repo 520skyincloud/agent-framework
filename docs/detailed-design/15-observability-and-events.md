@@ -2,135 +2,97 @@
 
 ## 设计目标
 
-定义 RuntimeEvent、指标、trace、审计日志、成本事件、UI 事件流和隐私脱敏。
-
-本章必须写到工程师可以直接实现：输入、输出、状态、默认数字、失败处理和验收方式都要明确。
+- 定义事件、指标、trace、审计日志和成本记录，让运行过程可解释。
 
 ## 非目标
 
 - 不接管其它专题的职责。
-- 不用隐藏全局状态传递关键数据。
-- 不用自然语言错误代替结构化错误。
-- 不把“后续再定”当作实现方案。
+- 不使用隐藏全局状态。
+- 不把失败留给调用方猜测。
 
 ## 核心规则
 
-- 所有输入必须显式传入。
-- 所有输出必须能被 UI、SDK、replay 共用。
-- 所有失败必须返回结构化错误：code、message、recoverable、nextAction。
-- 任何影响下一轮模型输入的状态都必须进入 transcript 或 metadata。
-- 任何副作用都必须先过权限系统和预算系统。
-- 默认值必须集中在配置或常量模块。
+- 所有事件必须有 sessionId、requestId、timestamp。
+- 敏感字段必须脱敏。
+- 模型调用记录 tokens、cost、latency。
+- 工具调用记录 duration、permission、outputSize。
+- 权限事件保留 30 天。
+- 事件 schema 版本化。
 
 ## 状态机
 
 ~~~mermaid
 stateDiagram-v2
-  state "接收请求" as Receive
-  state "校验输入" as Validate
-  state "检查预算权限" as Guard
-  state "执行核心逻辑" as Execute
-  state "持久化结果" as Persist
-  state "发出事件" as Emit
-  state "成功" as Success
-  state "失败" as Failure
-
-  [*] --> Receive
-  Receive --> Validate
-  Validate --> Guard: 输入合法
-  Validate --> Failure: 输入非法
-  Guard --> Execute: 允许执行
-  Guard --> Failure: 被拒绝
-  Execute --> Persist
-  Execute --> Failure: 执行失败
-  Persist --> Emit
-  Emit --> Success
-  Success --> [*]
-  Failure --> [*]
+  state "创建事件" as S0
+  state "脱敏" as S1
+  state "校验 schema" as S2
+  state "截断大字段" as S3
+  state "写事件日志" as S4
+  state "更新指标" as S5
+  state "推送 UI" as S6
+  state "写审计" as S7
+  state "失败降级" as S8
+  [*] --> S0
+  S0 --> S1
+  S1 --> S2
+  S2 --> S3
+  S3 --> S4
+  S4 --> S5
+  S5 --> S6
+  S6 --> S7
+  S7 --> S8
+  S8 --> [*]
 ~~~
 
 ## 数据结构
 
 ~~~ts
-type EmitRuntimeEventInput = {
-  sessionId: string
-  agentId?: string
-  requestId: string
-  cwd: string
-  config: RuntimeConfig
-  state: RuntimeState
-}
-
-type EmitRuntimeEventResult =
-  | { ok: true; events: RuntimeEvent[]; statePatch?: Partial<RuntimeState>; messages?: Message[] }
-  | { ok: false; events: RuntimeEvent[]; error: RuntimeError }
-
-type RuntimeError = {
-  code: string
-  message: string
-  recoverable: boolean
-  nextAction: "retry" | "compact" | "ask_user" | "abort" | "fallback"
-  details?: Record<string, unknown>
-}
+type RuntimeEvent = { version: 1; type: string; sessionId: string; requestId: string; timestamp: string; data: Record<string, unknown> }
 ~~~
 
 ## 默认值
 
 | 配置 | 默认值 | 说明 |
 |---|---:|---|
-| requestTimeoutMs | 120_000 | 单次请求超时。 |
-| maxRetries | 2 | 模块内部恢复重试。 |
-| eventFlushMs | 100 | 事件刷新间隔。 |
-| persistRequired | true | 影响后续模型的状态必须持久化。 |
+| eventSchemaVersion | 1 | 事件版本。 |
+| eventFlushMs | 100 | 刷新间隔。 |
+| maxEventBytes | 65_536 | 单事件最大 64KB。 |
+| auditRetentionDays | 30 | 审计保留。 |
+| redactSecrets | true | 默认脱敏。 |
 
 ## 详细流程
 
-1. 所有模块发统一 RuntimeEvent。
-2. 事件包含 sessionId、requestId、timestamp。
-3. 敏感输入先脱敏。
-4. token、费用、重试、权限写指标。
-5. UI 不读取内部状态，只消费事件。
+1. 模块创建事件对象。
+2. redactEvent 脱敏。
+3. 校验 schema。
+4. 写 event log。
+5. 同步更新 metrics。
+6. 如果 UI 订阅，推送简化事件。
+7. 事件过大时截断 details 并保留 path。
 
 ## 失败处理
 
-| 失败 | 处理 |
+| 错误码或失败 | 处理 |
 |---|---|
-| 输入缺字段 | 返回 invalid_input，指出缺失字段，不执行核心逻辑。 |
-| 权限拒绝 | 返回 permission_denied，不自动重试，可让用户确认。 |
-| 超预算 | 返回 budget_exceeded，附当前预算和需要的预算。 |
-| 执行超时 | 返回 timeout，保留已产生事件。 |
-| 持久化失败 | 返回 persistence_failed，阻塞继续执行。 |
-| replay 不一致 | 返回 replay_mismatch，输出第一处不同事件。 |
+| event_too_large | 截断 details。 |
+| redaction_failed | 不发原事件，发 redaction_failed。 |
+| event_log_write_failed | 不阻塞主循环，但写 stderr fallback。 |
+| metric_write_failed | 记录 warning。 |
 
 ## 提示词模板
 
-本章默认不需要专用模型提示词。若实现中需要模型参与，必须把输入、输出格式、失败分支写成固定模板。
+本章没有默认模型调用；如果实现需要模型参与，必须复用上下文压缩、权限解释或工具错误恢复章节的固定提示词。
 
 ## 可实现伪代码
 
 ~~~ts
-async function emitRuntimeEvent(input: EmitRuntimeEventInput): Promise<EmitRuntimeEventResult> {
-  const events: RuntimeEvent[] = []
-  const validation = validateInput(input)
-  if (!validation.ok) return { ok: false, events, error: validation.error }
-
-  const guard = await checkBudgetAndPermission(input)
-  if (!guard.ok) {
-    events.push({ type: "guard_rejected", requestId: input.requestId, code: guard.error.code })
-    return { ok: false, events, error: guard.error }
-  }
-
-  try {
-    events.push({ type: "module_started", requestId: input.requestId })
-    const result = await executeCore(input, events)
-    await persistResult(input.sessionId, result)
-    events.push({ type: "module_completed", requestId: input.requestId })
-    return { ok: true, events, statePatch: result.statePatch, messages: result.messages }
-  } catch (error) {
-    const normalized = normalizeRuntimeError(error)
-    events.push({ type: "module_failed", requestId: input.requestId, code: normalized.code })
-    return { ok: false, events, error: normalized }
-  }
+function emitRuntimeEvent(event: RuntimeEvent): void {
+  const redacted = redactEvent(event)
+  const valid = validateEvent(redacted)
+  if (!valid.ok) throw new Error("invalid_event")
+  eventLog.append(truncateLargeEvent(redacted, 65_536))
+  metrics.update(redacted)
+  uiBus.publish(toUiEvent(redacted))
 }
 ~~~
 
@@ -138,16 +100,15 @@ async function emitRuntimeEvent(input: EmitRuntimeEventInput): Promise<EmitRunti
 
 | 用例 | 输入 | 期望 |
 |---|---|---|
-| 正常路径 | 合法输入 | ok=true。 |
-| 输入缺失 | 缺 sessionId | invalid_input。 |
-| 权限拒绝 | deny 命中 | permission_denied。 |
-| 超预算 | 预算不足 | budget_exceeded。 |
-| 持久化失败 | transcript 不可写 | persistence_failed。 |
+| 模型事件 | 一次模型调用完成 | 记录 inputTokens、outputTokens、cost、latency。 |
+| 工具事件 | Read 执行完成 | 记录 durationMs、outputBytes、permission。 |
+| secret 脱敏 | 事件 data 含 API key | 写入前替换为 [REDACTED]。 |
+| 事件过大 | data 超过 65_536 bytes | 截断 details 并记录 truncated=true。 |
+| 日志不可写 | event log 写失败 | 主循环不中断，写 fallback warning。 |
 
 ## 验收标准
 
-- 正常路径、失败路径、边界值都有自动化测试。
-- 所有错误都有 code 和 nextAction。
-- 影响下一轮模型行为的数据已经持久化。
-- replay 可以复现关键事件序列。
-- 文档中的默认数字能在配置或常量模块找到同名字段。
+- 有具体默认值。
+- 有结构化错误码。
+- 有可执行伪代码。
+- 测试覆盖正常路径、失败路径和边界值。

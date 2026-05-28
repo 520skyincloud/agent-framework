@@ -2,51 +2,52 @@
 
 ## 设计目标
 
-把一次用户请求推进到完成：组装上下文、调用模型、执行工具、追加结果、决定是否继续。
-
-本章必须写到工程师可以直接实现：输入、输出、状态、默认数字、失败处理和验收方式都要明确。
+- 把一次用户输入推进到终止状态：模型输出、工具执行、继续循环或停止。
+- 让主循环成为 async generator，UI、SDK、CLI、replay 都消费同一事件流。
+- 保证任何退出路径都不会留下孤立 tool_use。
 
 ## 非目标
 
-- 不接管其它专题的职责。
-- 不用隐藏全局状态传递关键数据。
-- 不用自然语言错误代替结构化错误。
-- 不把“后续再定”当作实现方案。
+- 不在主循环内实现具体工具逻辑。
+- 不在主循环内写权限规则。
+- 不在主循环内直接拼 provider 私有格式。
 
 ## 核心规则
 
-- 所有输入必须显式传入。
-- 所有输出必须能被 UI、SDK、replay 共用。
-- 所有失败必须返回结构化错误：code、message、recoverable、nextAction。
-- 任何影响下一轮模型输入的状态都必须进入 transcript 或 metadata。
-- 任何副作用都必须先过权限系统和预算系统。
-- 默认值必须集中在配置或常量模块。
+- 每轮模型调用前必须先写入用户消息、metadata 和上下文预算事件。
+- assistant 消息必须先完整写入 transcript，再执行其中的 tool_use。
+- 工具结果必须按 assistant 消息中 tool_use 的原始顺序返回给模型。
+- 默认 maxTurns=20；达到后返回 done:max_turns。
+- abort 时必须为未完成 tool_use 合成错误 tool_result。
+- 模型调用、工具执行、持久化、权限拒绝都必须发 RuntimeEvent。
 
 ## 状态机
 
 ~~~mermaid
 stateDiagram-v2
-  state "接收请求" as Receive
-  state "校验输入" as Validate
-  state "检查预算权限" as Guard
-  state "执行核心逻辑" as Execute
-  state "持久化结果" as Persist
-  state "发出事件" as Emit
-  state "成功" as Success
-  state "失败" as Failure
-
-  [*] --> Receive
-  Receive --> Validate
-  Validate --> Guard: 输入合法
-  Validate --> Failure: 输入非法
-  Guard --> Execute: 允许执行
-  Guard --> Failure: 被拒绝
-  Execute --> Persist
-  Execute --> Failure: 执行失败
-  Persist --> Emit
-  Emit --> Success
-  Success --> [*]
-  Failure --> [*]
+  state "接收用户输入" as S0
+  state "持久化用户消息" as S1
+  state "检查上下文预算" as S2
+  state "组装 Prompt" as S3
+  state "调用模型" as S4
+  state "写入 assistant" as S5
+  state "判断工具" as S6
+  state "执行工具" as S7
+  state "写入工具结果" as S8
+  state "校验配对" as S9
+  state "完成或继续" as S10
+  [*] --> S0
+  S0 --> S1
+  S1 --> S2
+  S2 --> S3
+  S3 --> S4
+  S4 --> S5
+  S5 --> S6
+  S6 --> S7
+  S7 --> S8
+  S8 --> S9
+  S9 --> S10
+  S10 --> [*]
 ~~~
 
 ## 数据结构
@@ -54,86 +55,105 @@ stateDiagram-v2
 ~~~ts
 type QueryLoopInput = {
   sessionId: string
-  agentId?: string
-  requestId: string
-  cwd: string
-  config: RuntimeConfig
-  state: RuntimeState
+  userMessage: UserMessage
+  route: ModelRoute
+  tools: ToolDefinition[]
+  maxTurns?: number
+  abortSignal: AbortSignal
 }
 
-type QueryLoopResult =
-  | { ok: true; events: RuntimeEvent[]; statePatch?: Partial<RuntimeState>; messages?: Message[] }
-  | { ok: false; events: RuntimeEvent[]; error: RuntimeError }
+type QueryLoopStopReason = "stop" | "max_turns" | "aborted" | "context_blocked" | "model_error" | "tool_error"
 
-type RuntimeError = {
-  code: string
-  message: string
-  recoverable: boolean
-  nextAction: "retry" | "compact" | "ask_user" | "abort" | "fallback"
-  details?: Record<string, unknown>
-}
+type RuntimeEvent =
+  | { type: "turn_started"; sessionId: string; turn: number }
+  | { type: "context_decision"; action: ContextBudgetDecision["action"]; promptTokens: number }
+  | { type: "model_stream_start"; requestId: string; model: string }
+  | { type: "assistant_delta"; text: string }
+  | { type: "assistant_message"; messageId: string }
+  | { type: "tool_started"; toolUseId: string; name: string }
+  | { type: "tool_finished"; toolUseId: string; ok: boolean; durationMs: number }
+  | { type: "done"; reason: QueryLoopStopReason }
 ~~~
 
 ## 默认值
 
 | 配置 | 默认值 | 说明 |
 |---|---:|---|
-| requestTimeoutMs | 120_000 | 单次请求超时。 |
-| maxRetries | 2 | 模块内部恢复重试。 |
-| eventFlushMs | 100 | 事件刷新间隔。 |
-| persistRequired | true | 影响后续模型的状态必须持久化。 |
+| maxTurns | 20 | 一次用户请求最多自循环 20 轮。 |
+| turnHardTimeoutMs | 1_800_000 | 单次用户请求硬超时 30 分钟。 |
+| eventFlushMs | 100 | UI 事件刷新间隔。 |
+| abortRepairRequired | true | 中断时补齐错误 tool_result。 |
+| pairValidation | after_each_tool_batch | 每批工具结果后校验配对。 |
 
 ## 详细流程
 
-1. 写入用户消息。
-2. 检查上下文预算。
-3. 组装 Prompt。
-4. 流式调用模型。
-5. 写入 assistant 消息。
-6. 如果有工具调用，执行工具并追加 tool_result。
-7. 校验 tool_use/tool_result 配对。
-8. 无工具或达到 maxTurns 时结束。
+1. 创建 state：turn=0、terminalReason=null。
+2. 写入 user message；如果写入失败，直接返回 persistence_failed。
+3. 进入 while turn < maxTurns。
+4. 调用 decideContextAction；返回 block 时不调用模型。
+5. assemblePrompt 得到 provider 输入，并记录 promptTokens。
+6. 调用 streamModel；每个 delta 都发 assistant_delta。
+7. 流结束后构造 assistant message，写入 transcript。
+8. 如果 assistant 没有 tool_use，执行 stop hooks，返回 done:stop。
+9. 如果有 tool_use，交给 runToolBatch；按原始顺序写入 tool_result。
+10. 调用 validateToolPairsOrThrow；通过后 turn++，继续下一轮。
 
 ## 失败处理
 
-| 失败 | 处理 |
+| 错误码或失败 | 处理 |
 |---|---|
-| 输入缺字段 | 返回 invalid_input，指出缺失字段，不执行核心逻辑。 |
-| 权限拒绝 | 返回 permission_denied，不自动重试，可让用户确认。 |
-| 超预算 | 返回 budget_exceeded，附当前预算和需要的预算。 |
-| 执行超时 | 返回 timeout，保留已产生事件。 |
-| 持久化失败 | 返回 persistence_failed，阻塞继续执行。 |
-| replay 不一致 | 返回 replay_mismatch，输出第一处不同事件。 |
+| transcript_write_failed | 不可恢复，停止主循环，返回 done:model_error 或 done:tool_error。 |
+| context_blocked | 不调用模型，返回 done:context_blocked，并附 compact 建议。 |
+| model_stream_idle | 交给模型路由层重试；重试失败返回 done:model_error。 |
+| invalid_tool_use | 写 repair message，请模型修复一次；再次失败终止。 |
+| abort_during_tools | 合成 isError=true 的 tool_result，然后 done:aborted。 |
 
 ## 提示词模板
 
-本章默认不需要专用模型提示词。若实现中需要模型参与，必须把输入、输出格式、失败分支写成固定模板。
+本章不直接调用模型；模型修复提示词放在工具协议和模型路由章节。
 
 ## 可实现伪代码
 
 ~~~ts
-async function queryLoop(input: QueryLoopInput): Promise<QueryLoopResult> {
-  const events: RuntimeEvent[] = []
-  const validation = validateInput(input)
-  if (!validation.ok) return { ok: false, events, error: validation.error }
+async function* queryLoop(input: QueryLoopInput): AsyncGenerator<RuntimeEvent> {
+  const maxTurns = input.maxTurns ?? 20
+  await transcript.append(input.sessionId, input.userMessage)
 
-  const guard = await checkBudgetAndPermission(input)
-  if (!guard.ok) {
-    events.push({ type: "guard_rejected", requestId: input.requestId, code: guard.error.code })
-    return { ok: false, events, error: guard.error }
+  for (let turn = 0; turn < maxTurns; turn++) {
+    yield { type: "turn_started", sessionId: input.sessionId, turn }
+
+    const messages = await transcript.loadMessages(input.sessionId)
+    const context = decideContextAction({ messages, route: input.route })
+    yield { type: "context_decision", action: context.action, promptTokens: context.promptTokens }
+
+    if (context.action === "block") {
+      yield { type: "done", reason: "context_blocked" }
+      return
+    }
+    if (context.action !== "continue") await runCompaction(context)
+
+    const request = assemblePrompt({ sessionId: input.sessionId, route: input.route, tools: input.tools })
+    yield { type: "model_stream_start", requestId: request.id, model: request.model }
+
+    const assistant = await collectAssistant(request, input.abortSignal)
+    await transcript.append(input.sessionId, assistant)
+    yield { type: "assistant_message", messageId: assistant.id }
+
+    const toolUses = extractToolUses(assistant)
+    if (toolUses.length === 0) {
+      yield { type: "done", reason: "stop" }
+      return
+    }
+
+    const results = await runToolBatch({ sessionId: input.sessionId, toolUses, tools: input.tools, abortSignal: input.abortSignal })
+    for (const result of orderToolResults(results, toolUses)) {
+      await transcript.append(input.sessionId, result.message)
+      yield { type: "tool_finished", toolUseId: result.toolUseId, ok: result.ok, durationMs: result.durationMs }
+    }
+    validateToolPairsOrThrow(await transcript.loadMessages(input.sessionId))
   }
 
-  try {
-    events.push({ type: "module_started", requestId: input.requestId })
-    const result = await executeCore(input, events)
-    await persistResult(input.sessionId, result)
-    events.push({ type: "module_completed", requestId: input.requestId })
-    return { ok: true, events, statePatch: result.statePatch, messages: result.messages }
-  } catch (error) {
-    const normalized = normalizeRuntimeError(error)
-    events.push({ type: "module_failed", requestId: input.requestId, code: normalized.code })
-    return { ok: false, events, error: normalized }
-  }
+  yield { type: "done", reason: "max_turns" }
 }
 ~~~
 
@@ -141,16 +161,14 @@ async function queryLoop(input: QueryLoopInput): Promise<QueryLoopResult> {
 
 | 用例 | 输入 | 期望 |
 |---|---|---|
-| 正常路径 | 合法输入 | ok=true。 |
-| 输入缺失 | 缺 sessionId | invalid_input。 |
-| 权限拒绝 | deny 命中 | permission_denied。 |
-| 超预算 | 预算不足 | budget_exceeded。 |
-| 持久化失败 | transcript 不可写 | persistence_failed。 |
+| 无工具结束 | 模型返回纯文本 | 事件最后是 done:stop。 |
+| 两个工具调用 | assistant 包含 toolu_1、toolu_2 | tool_result 顺序必须是 1、2。 |
+| 工具中断 | abortSignal 在第二个工具前触发 | 第二个工具得到错误 tool_result。 |
+| 上下文阻塞 | promptTokens > blockAt 且 compact 失败 | 不调用模型，done:context_blocked。 |
 
 ## 验收标准
 
-- 正常路径、失败路径、边界值都有自动化测试。
-- 所有错误都有 code 和 nextAction。
-- 影响下一轮模型行为的数据已经持久化。
-- replay 可以复现关键事件序列。
-- 文档中的默认数字能在配置或常量模块找到同名字段。
+- 主循环是 async generator。
+- 所有退出路径都有 done 事件。
+- 没有孤立 tool_use。
+- 达到 maxTurns=20 必须停止。

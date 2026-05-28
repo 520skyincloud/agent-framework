@@ -2,136 +2,97 @@
 
 ## 设计目标
 
-控制 token、费用、工具次数、子 Agent 数、并发、provider 限速和用户确认。
-
-本章必须写到工程师可以直接实现：输入、输出、状态、默认数字、失败处理和验收方式都要明确。
+- 控制 token、费用、工具次数、子 Agent 数、并发和 provider 限速。
 
 ## 非目标
 
 - 不接管其它专题的职责。
-- 不用隐藏全局状态传递关键数据。
-- 不用自然语言错误代替结构化错误。
-- 不把“后续再定”当作实现方案。
+- 不使用隐藏全局状态。
+- 不把失败留给调用方猜测。
 
 ## 核心规则
 
-- 所有输入必须显式传入。
-- 所有输出必须能被 UI、SDK、replay 共用。
-- 所有失败必须返回结构化错误：code、message、recoverable、nextAction。
-- 任何影响下一轮模型输入的状态都必须进入 transcript 或 metadata。
-- 任何副作用都必须先过权限系统和预算系统。
-- 默认值必须集中在配置或常量模块。
+- 每次模型调用前扣预计预算，完成后按实际修正。
+- 每 turn 最多 3 个子 Agent。
+- 单 turn 工具调用默认最多 20 个。
+- 超过预算返回 ask_user 或 abort。
+- 429 必须进入 rate limiter。
+- 预算事件必须写 observability。
 
 ## 状态机
 
 ~~~mermaid
 stateDiagram-v2
-  state "接收请求" as Receive
-  state "校验输入" as Validate
-  state "检查预算权限" as Guard
-  state "执行核心逻辑" as Execute
-  state "持久化结果" as Persist
-  state "发出事件" as Emit
-  state "成功" as Success
-  state "失败" as Failure
-
-  [*] --> Receive
-  Receive --> Validate
-  Validate --> Guard: 输入合法
-  Validate --> Failure: 输入非法
-  Guard --> Execute: 允许执行
-  Guard --> Failure: 被拒绝
-  Execute --> Persist
-  Execute --> Failure: 执行失败
-  Persist --> Emit
-  Emit --> Success
-  Success --> [*]
-  Failure --> [*]
+  state "读取预算" as S0
+  state "估算消耗" as S1
+  state "检查工具次数" as S2
+  state "检查子 Agent 数" as S3
+  state "检查费用" as S4
+  state "检查 provider 限速" as S5
+  state "预留预算" as S6
+  state "实际用量回填" as S7
+  state "发 usage 事件" as S8
+  [*] --> S0
+  S0 --> S1
+  S1 --> S2
+  S2 --> S3
+  S3 --> S4
+  S4 --> S5
+  S5 --> S6
+  S6 --> S7
+  S7 --> S8
+  S8 --> [*]
 ~~~
 
 ## 数据结构
 
 ~~~ts
-type CheckBudgetInput = {
-  sessionId: string
-  agentId?: string
-  requestId: string
-  cwd: string
-  config: RuntimeConfig
-  state: RuntimeState
-}
-
-type CheckBudgetResult =
-  | { ok: true; events: RuntimeEvent[]; statePatch?: Partial<RuntimeState>; messages?: Message[] }
-  | { ok: false; events: RuntimeEvent[]; error: RuntimeError }
-
-type RuntimeError = {
-  code: string
-  message: string
-  recoverable: boolean
-  nextAction: "retry" | "compact" | "ask_user" | "abort" | "fallback"
-  details?: Record<string, unknown>
-}
+type BudgetState = { maxCostUsd: number; spentUsd: number; toolCallsThisTurn: number; agentSpawnsThisTurn: number; modelCallsInFlight: number }
 ~~~
 
 ## 默认值
 
 | 配置 | 默认值 | 说明 |
 |---|---:|---|
-| requestTimeoutMs | 120_000 | 单次请求超时。 |
-| maxRetries | 2 | 模块内部恢复重试。 |
-| eventFlushMs | 100 | 事件刷新间隔。 |
-| persistRequired | true | 影响后续模型的状态必须持久化。 |
+| maxToolCallsPerTurn | 20 | 单轮工具调用上限。 |
+| maxAgentSpawnsPerTurn | 3 | 单轮子 Agent 上限。 |
+| defaultMaxCostUsd | 5 | 默认单任务费用上限。 |
+| rateLimitBucketMs | 60_000 | 限速窗口。 |
+| maxConcurrentModelCalls | 4 | 模型并发上限。 |
 
 ## 详细流程
 
-1. 每轮开始读取剩余预算。
-2. 估算模型和工具成本。
-3. 超预算则 block 或 ask。
-4. provider 429 按 retry-after。
-5. 子 Agent 数量达到上限时拒绝新建。
-6. 每次消耗写 usage event。
+1. 读取 session budget。
+2. 估算 prompt、output、tool、agent 成本。
+3. 如果超过 hard limit，返回 abort。
+4. 如果超过 soft limit，返回 ask_user。
+5. 通过后 reserve 预算。
+6. 调用结束后 reconcile 实际 usage。
+7. 收到 429 时更新 provider bucket。
 
 ## 失败处理
 
-| 失败 | 处理 |
+| 错误码或失败 | 处理 |
 |---|---|
-| 输入缺字段 | 返回 invalid_input，指出缺失字段，不执行核心逻辑。 |
-| 权限拒绝 | 返回 permission_denied，不自动重试，可让用户确认。 |
-| 超预算 | 返回 budget_exceeded，附当前预算和需要的预算。 |
-| 执行超时 | 返回 timeout，保留已产生事件。 |
-| 持久化失败 | 返回 persistence_failed，阻塞继续执行。 |
-| replay 不一致 | 返回 replay_mismatch，输出第一处不同事件。 |
+| cost_exceeded_hard | 中止执行。 |
+| cost_exceeded_soft | 请求用户确认。 |
+| tool_quota_exceeded | 拒绝新工具调用。 |
+| agent_spawn_exceeded | 拒绝新子 Agent。 |
+| provider_rate_limited | 等待 retry-after 或排队。 |
 
 ## 提示词模板
 
-本章默认不需要专用模型提示词。若实现中需要模型参与，必须把输入、输出格式、失败分支写成固定模板。
+本章没有默认模型调用；如果实现需要模型参与，必须复用上下文压缩、权限解释或工具错误恢复章节的固定提示词。
 
 ## 可实现伪代码
 
 ~~~ts
-async function checkBudget(input: CheckBudgetInput): Promise<CheckBudgetResult> {
-  const events: RuntimeEvent[] = []
-  const validation = validateInput(input)
-  if (!validation.ok) return { ok: false, events, error: validation.error }
-
-  const guard = await checkBudgetAndPermission(input)
-  if (!guard.ok) {
-    events.push({ type: "guard_rejected", requestId: input.requestId, code: guard.error.code })
-    return { ok: false, events, error: guard.error }
-  }
-
-  try {
-    events.push({ type: "module_started", requestId: input.requestId })
-    const result = await executeCore(input, events)
-    await persistResult(input.sessionId, result)
-    events.push({ type: "module_completed", requestId: input.requestId })
-    return { ok: true, events, statePatch: result.statePatch, messages: result.messages }
-  } catch (error) {
-    const normalized = normalizeRuntimeError(error)
-    events.push({ type: "module_failed", requestId: input.requestId, code: normalized.code })
-    return { ok: false, events, error: normalized }
-  }
+function checkBudget(req: BudgetRequest, state: BudgetState): BudgetDecision {
+  if (state.toolCallsThisTurn + req.toolCalls > 20) return { action: "deny", code: "tool_quota_exceeded" }
+  if (state.agentSpawnsThisTurn + req.agentSpawns > 3) return { action: "deny", code: "agent_spawn_exceeded" }
+  if (state.spentUsd + req.estimatedUsd > state.maxCostUsd) return { action: "ask_user", code: "cost_exceeded_soft" }
+  if (state.modelCallsInFlight >= 4) return { action: "queue", code: "model_concurrency_full" }
+  return { action: "allow", reservationId: reserve(req) }
 }
 ~~~
 
@@ -139,16 +100,15 @@ async function checkBudget(input: CheckBudgetInput): Promise<CheckBudgetResult> 
 
 | 用例 | 输入 | 期望 |
 |---|---|---|
-| 正常路径 | 合法输入 | ok=true。 |
-| 输入缺失 | 缺 sessionId | invalid_input。 |
-| 权限拒绝 | deny 命中 | permission_denied。 |
-| 超预算 | 预算不足 | budget_exceeded。 |
-| 持久化失败 | transcript 不可写 | persistence_failed。 |
+| 工具超限 | 本 turn 已 20 个工具，再请求 1 个 | tool_quota_exceeded。 |
+| 子 Agent 超限 | 已启动 3 个，再启动 1 个 | agent_spawn_exceeded。 |
+| 费用软超限 | spent+estimated > maxCostUsd | ask_user。 |
+| 模型并发满 | modelCallsInFlight=4 | queue。 |
+| 429 retry-after | provider 返回 retry-after=12 秒 | bucket 延迟至少 12 秒。 |
 
 ## 验收标准
 
-- 正常路径、失败路径、边界值都有自动化测试。
-- 所有错误都有 code 和 nextAction。
-- 影响下一轮模型行为的数据已经持久化。
-- replay 可以复现关键事件序列。
-- 文档中的默认数字能在配置或常量模块找到同名字段。
+- 有具体默认值。
+- 有结构化错误码。
+- 有可执行伪代码。
+- 测试覆盖正常路径、失败路径和边界值。

@@ -2,136 +2,98 @@
 
 ## 设计目标
 
-管理后台 shell、后台 Agent、长任务输出、取消、轮询和结果读取。
-
-本章必须写到工程师可以直接实现：输入、输出、状态、默认数字、失败处理和验收方式都要明确。
+- 管理后台 shell 和后台 Agent，让长任务不阻塞主循环。
 
 ## 非目标
 
 - 不接管其它专题的职责。
-- 不用隐藏全局状态传递关键数据。
-- 不用自然语言错误代替结构化错误。
-- 不把“后续再定”当作实现方案。
+- 不使用隐藏全局状态。
+- 不把失败留给调用方猜测。
 
 ## 核心规则
 
-- 所有输入必须显式传入。
-- 所有输出必须能被 UI、SDK、replay 共用。
-- 所有失败必须返回结构化错误：code、message、recoverable、nextAction。
-- 任何影响下一轮模型输入的状态都必须进入 transcript 或 metadata。
-- 任何副作用都必须先过权限系统和预算系统。
-- 默认值必须集中在配置或常量模块。
+- 超过 10 秒的 Bash 建议转后台。
+- 后台任务必须有 taskId、status、outputPath。
+- stdout/stderr 每 1 秒或 8KB flush。
+- 取消任务先 SIGTERM，5 秒后 SIGKILL。
+- 主 Agent 只能通过 TaskOutput 读取结果。
 
 ## 状态机
 
 ~~~mermaid
 stateDiagram-v2
-  state "接收请求" as Receive
-  state "校验输入" as Validate
-  state "检查预算权限" as Guard
-  state "执行核心逻辑" as Execute
-  state "持久化结果" as Persist
-  state "发出事件" as Emit
-  state "成功" as Success
-  state "失败" as Failure
-
-  [*] --> Receive
-  Receive --> Validate
-  Validate --> Guard: 输入合法
-  Validate --> Failure: 输入非法
-  Guard --> Execute: 允许执行
-  Guard --> Failure: 被拒绝
-  Execute --> Persist
-  Execute --> Failure: 执行失败
-  Persist --> Emit
-  Emit --> Success
-  Success --> [*]
-  Failure --> [*]
+  state "创建任务记录" as S0
+  state "启动进程" as S1
+  state "记录 pid" as S2
+  state "流式写输出" as S3
+  state "更新 heartbeat" as S4
+  state "完成或失败" as S5
+  state "取消处理" as S6
+  state "保存最终状态" as S7
+  state "供主 Agent 读取" as S8
+  [*] --> S0
+  S0 --> S1
+  S1 --> S2
+  S2 --> S3
+  S3 --> S4
+  S4 --> S5
+  S5 --> S6
+  S6 --> S7
+  S7 --> S8
+  S8 --> [*]
 ~~~
 
 ## 数据结构
 
 ~~~ts
-type StartBackgroundTaskInput = {
-  sessionId: string
-  agentId?: string
-  requestId: string
-  cwd: string
-  config: RuntimeConfig
-  state: RuntimeState
-}
-
-type StartBackgroundTaskResult =
-  | { ok: true; events: RuntimeEvent[]; statePatch?: Partial<RuntimeState>; messages?: Message[] }
-  | { ok: false; events: RuntimeEvent[]; error: RuntimeError }
-
-type RuntimeError = {
-  code: string
-  message: string
-  recoverable: boolean
-  nextAction: "retry" | "compact" | "ask_user" | "abort" | "fallback"
-  details?: Record<string, unknown>
-}
+type TaskState = { taskId: string; kind: "shell" | "agent"; status: "running" | "succeeded" | "failed" | "cancelled" | "unknown"; outputPath: string; startedAt: string; finishedAt?: string; exitCode?: number }
 ~~~
 
 ## 默认值
 
 | 配置 | 默认值 | 说明 |
 |---|---:|---|
-| requestTimeoutMs | 120_000 | 单次请求超时。 |
-| maxRetries | 2 | 模块内部恢复重试。 |
-| eventFlushMs | 100 | 事件刷新间隔。 |
-| persistRequired | true | 影响后续模型的状态必须持久化。 |
+| autoBackgroundAfterMs | 10_000 | 超过 10 秒建议后台。 |
+| outputFlushMs | 1_000 | 输出刷新间隔。 |
+| outputFlushBytes | 8_192 | 输出刷新字节数。 |
+| terminateGraceMs | 5_000 | SIGTERM 后等待。 |
+| maxTaskOutputBytes | 104_857_600 | 单任务输出 100MB。 |
 
 ## 详细流程
 
-1. 创建 task metadata。
+1. 创建 task_<id>.json。
 2. 启动进程或子 Agent。
-3. stdout/stderr 分片落盘。
-4. 定期发 progress 事件。
-5. 取消时发送信号并更新状态。
-6. 主 Agent 用 task id 读取结果。
+3. 写 pid、startedAt、commandSummary。
+4. 流式写 task_<id>.out。
+5. 定期更新 heartbeat。
+6. 完成后写 exitCode 和 finishedAt。
+7. 取消时先 TERM 再 KILL。
 
 ## 失败处理
 
-| 失败 | 处理 |
+| 错误码或失败 | 处理 |
 |---|---|
-| 输入缺字段 | 返回 invalid_input，指出缺失字段，不执行核心逻辑。 |
-| 权限拒绝 | 返回 permission_denied，不自动重试，可让用户确认。 |
-| 超预算 | 返回 budget_exceeded，附当前预算和需要的预算。 |
-| 执行超时 | 返回 timeout，保留已产生事件。 |
-| 持久化失败 | 返回 persistence_failed，阻塞继续执行。 |
-| replay 不一致 | 返回 replay_mismatch，输出第一处不同事件。 |
+| spawn_failed | 任务状态标记为 failed。 |
+| output_too_large | 停止内联 preview，保留文件路径。 |
+| cancel_timeout | 发送 SIGKILL。 |
+| task_output_missing | 返回 missing_task_output。 |
+| heartbeat_stale | resume 时标 unknown。 |
 
 ## 提示词模板
 
-本章默认不需要专用模型提示词。若实现中需要模型参与，必须把输入、输出格式、失败分支写成固定模板。
+本章没有默认模型调用；如果实现需要模型参与，必须复用上下文压缩、权限解释或工具错误恢复章节的固定提示词。
 
 ## 可实现伪代码
 
 ~~~ts
-async function startBackgroundTask(input: StartBackgroundTaskInput): Promise<StartBackgroundTaskResult> {
-  const events: RuntimeEvent[] = []
-  const validation = validateInput(input)
-  if (!validation.ok) return { ok: false, events, error: validation.error }
-
-  const guard = await checkBudgetAndPermission(input)
-  if (!guard.ok) {
-    events.push({ type: "guard_rejected", requestId: input.requestId, code: guard.error.code })
-    return { ok: false, events, error: guard.error }
-  }
-
-  try {
-    events.push({ type: "module_started", requestId: input.requestId })
-    const result = await executeCore(input, events)
-    await persistResult(input.sessionId, result)
-    events.push({ type: "module_completed", requestId: input.requestId })
-    return { ok: true, events, statePatch: result.statePatch, messages: result.messages }
-  } catch (error) {
-    const normalized = normalizeRuntimeError(error)
-    events.push({ type: "module_failed", requestId: input.requestId, code: normalized.code })
-    return { ok: false, events, error: normalized }
-  }
+async function startBackgroundTask(req: TaskRequest): Promise<TaskState> {
+  const task = await taskStore.create(req)
+  const child = spawn(req.command, req.args, { cwd: req.cwd })
+  await taskStore.attachPid(task.taskId, child.pid)
+  pipeWithFlush(child.stdout, task.outputPath, 1_000, 8_192)
+  pipeWithFlush(child.stderr, task.outputPath, 1_000, 8_192)
+  child.on("exit", code => taskStore.finish(task.taskId, code === 0 ? "succeeded" : "failed", code))
+  return task
 }
 ~~~
 
@@ -139,16 +101,15 @@ async function startBackgroundTask(input: StartBackgroundTaskInput): Promise<Sta
 
 | 用例 | 输入 | 期望 |
 |---|---|---|
-| 正常路径 | 合法输入 | ok=true。 |
-| 输入缺失 | 缺 sessionId | invalid_input。 |
-| 权限拒绝 | deny 命中 | permission_denied。 |
-| 超预算 | 预算不足 | budget_exceeded。 |
-| 持久化失败 | transcript 不可写 | persistence_failed。 |
+| 普通后台命令 | npm test 运行 20 秒 | task status 先 running 后 succeeded/failed。 |
+| 输出分片 | stdout 每秒 20KB | 每 8_192 bytes 或 1_000 ms flush。 |
+| 取消任务 | 用户 cancel | 先 SIGTERM，5_000 ms 后仍在则 SIGKILL。 |
+| 输出过大 | 任务输出超过 100MB | 停止 preview，保留 outputPath。 |
+| 恢复陈旧任务 | 进程不存在但 status=running | 标记 unknown。 |
 
 ## 验收标准
 
-- 正常路径、失败路径、边界值都有自动化测试。
-- 所有错误都有 code 和 nextAction。
-- 影响下一轮模型行为的数据已经持久化。
-- replay 可以复现关键事件序列。
-- 文档中的默认数字能在配置或常量模块找到同名字段。
+- 有具体默认值。
+- 有结构化错误码。
+- 有可执行伪代码。
+- 测试覆盖正常路径、失败路径和边界值。

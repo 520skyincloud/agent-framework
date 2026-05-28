@@ -2,137 +2,99 @@
 
 ## 设计目标
 
-定义 session、metadata、transcript、工具输出、任务状态、恢复算法和损坏修复。
-
-本章必须写到工程师可以直接实现：输入、输出、状态、默认数字、失败处理和验收方式都要明确。
+- 定义会话如何落盘、进程崩溃后如何恢复、恢复后第一轮如何继续。
 
 ## 非目标
 
 - 不接管其它专题的职责。
-- 不用隐藏全局状态传递关键数据。
-- 不用自然语言错误代替结构化错误。
-- 不把“后续再定”当作实现方案。
+- 不使用隐藏全局状态。
+- 不把失败留给调用方猜测。
 
 ## 核心规则
 
-- 所有输入必须显式传入。
-- 所有输出必须能被 UI、SDK、replay 共用。
-- 所有失败必须返回结构化错误：code、message、recoverable、nextAction。
-- 任何影响下一轮模型输入的状态都必须进入 transcript 或 metadata。
-- 任何副作用都必须先过权限系统和预算系统。
-- 默认值必须集中在配置或常量模块。
+- session 目录必须可迁移。
+- metadata 和 transcript 分开。
+- 恢复时先校验 transcript，再恢复 tasks。
+- running task 超过心跳窗口标记 unknown。
+- 恢复后如果上下文超 blockAt，必须先 compact。
 
 ## 状态机
 
 ~~~mermaid
 stateDiagram-v2
-  state "接收请求" as Receive
-  state "校验输入" as Validate
-  state "检查预算权限" as Guard
-  state "执行核心逻辑" as Execute
-  state "持久化结果" as Persist
-  state "发出事件" as Emit
-  state "成功" as Success
-  state "失败" as Failure
-
-  [*] --> Receive
-  Receive --> Validate
-  Validate --> Guard: 输入合法
-  Validate --> Failure: 输入非法
-  Guard --> Execute: 允许执行
-  Guard --> Failure: 被拒绝
-  Execute --> Persist
-  Execute --> Failure: 执行失败
-  Persist --> Emit
-  Emit --> Success
-  Success --> [*]
-  Failure --> [*]
+  state "读取 metadata" as S0
+  state "读取 transcript" as S1
+  state "校验 hash 和 sequence" as S2
+  state "校验工具配对" as S3
+  state "检查外部输出" as S4
+  state "恢复任务状态" as S5
+  state "恢复子 Agent" as S6
+  state "重新估算 token" as S7
+  state "生成 ResumeReport" as S8
+  [*] --> S0
+  S0 --> S1
+  S1 --> S2
+  S2 --> S3
+  S3 --> S4
+  S4 --> S5
+  S5 --> S6
+  S6 --> S7
+  S7 --> S8
+  S8 --> [*]
 ~~~
 
 ## 数据结构
 
 ~~~ts
-type ResumeSessionInput = {
-  sessionId: string
-  agentId?: string
-  requestId: string
-  cwd: string
-  config: RuntimeConfig
-  state: RuntimeState
-}
-
-type ResumeSessionResult =
-  | { ok: true; events: RuntimeEvent[]; statePatch?: Partial<RuntimeState>; messages?: Message[] }
-  | { ok: false; events: RuntimeEvent[]; error: RuntimeError }
-
-type RuntimeError = {
-  code: string
-  message: string
-  recoverable: boolean
-  nextAction: "retry" | "compact" | "ask_user" | "abort" | "fallback"
-  details?: Record<string, unknown>
-}
+type ResumeReport = { ok: boolean; sessionId: string; messages: Message[]; staleTasks: string[]; missingOutputs: string[]; needsCompactBeforeNextModel: boolean }
 ~~~
 
 ## 默认值
 
 | 配置 | 默认值 | 说明 |
 |---|---:|---|
-| requestTimeoutMs | 120_000 | 单次请求超时。 |
-| maxRetries | 2 | 模块内部恢复重试。 |
-| eventFlushMs | 100 | 事件刷新间隔。 |
-| persistRequired | true | 影响后续模型的状态必须持久化。 |
+| sessionRoot | ~/.agent/sessions | 默认会话目录。 |
+| metadataFlushMs | 500 | metadata 刷盘间隔。 |
+| taskHeartbeatStaleMs | 30_000 | 任务心跳过期阈值。 |
+| maxSessionBytes | 524_288_000 | 单会话 500MB 上限。 |
+| resumeRequiresValidation | true | 恢复必须校验。 |
 
 ## 详细流程
 
-1. 读取 metadata。
-2. 回放 transcript。
-3. 校验消息 id 和工具配对。
-4. 检查外部工具输出文件。
-5. 修复陈旧任务状态。
+1. 读取 metadata.json。
+2. 读取 transcript.jsonl 并校验。
+3. 加载 tool-results 索引。
+4. 加载 tasks 状态；running 且心跳过期标 unknown。
+5. 加载 subagent metadata。
 6. 重新估算 token。
-7. 超阻塞阈值则先 compact。
+7. 如果 prompt 超 blockAt，设置 needsCompactBeforeNextModel=true。
+8. 返回 ResumeReport。
 
 ## 失败处理
 
-| 失败 | 处理 |
+| 错误码或失败 | 处理 |
 |---|---|
-| 输入缺字段 | 返回 invalid_input，指出缺失字段，不执行核心逻辑。 |
-| 权限拒绝 | 返回 permission_denied，不自动重试，可让用户确认。 |
-| 超预算 | 返回 budget_exceeded，附当前预算和需要的预算。 |
-| 执行超时 | 返回 timeout，保留已产生事件。 |
-| 持久化失败 | 返回 persistence_failed，阻塞继续执行。 |
-| replay 不一致 | 返回 replay_mismatch，输出第一处不同事件。 |
+| metadata_missing | 从 transcript 重建最小 metadata。 |
+| transcript_corrupt | 追加 repair message 或阻塞。 |
+| tool_output_missing | 标记缺失，保留 preview。 |
+| task_stale | 标记 unknown，不假设成功。 |
+| session_too_large | 阻塞新工具输出，要求清理。 |
 
 ## 提示词模板
 
-本章默认不需要专用模型提示词。若实现中需要模型参与，必须把输入、输出格式、失败分支写成固定模板。
+本章没有默认模型调用；如果实现需要模型参与，必须复用上下文压缩、权限解释或工具错误恢复章节的固定提示词。
 
 ## 可实现伪代码
 
 ~~~ts
-async function resumeSession(input: ResumeSessionInput): Promise<ResumeSessionResult> {
-  const events: RuntimeEvent[] = []
-  const validation = validateInput(input)
-  if (!validation.ok) return { ok: false, events, error: validation.error }
-
-  const guard = await checkBudgetAndPermission(input)
-  if (!guard.ok) {
-    events.push({ type: "guard_rejected", requestId: input.requestId, code: guard.error.code })
-    return { ok: false, events, error: guard.error }
-  }
-
-  try {
-    events.push({ type: "module_started", requestId: input.requestId })
-    const result = await executeCore(input, events)
-    await persistResult(input.sessionId, result)
-    events.push({ type: "module_completed", requestId: input.requestId })
-    return { ok: true, events, statePatch: result.statePatch, messages: result.messages }
-  } catch (error) {
-    const normalized = normalizeRuntimeError(error)
-    events.push({ type: "module_failed", requestId: input.requestId, code: normalized.code })
-    return { ok: false, events, error: normalized }
-  }
+async function resumeSession(sessionId: string): Promise<ResumeReport> {
+  const metadata = await loadMetadataOrRebuild(sessionId)
+  const transcript = await loadAndValidateTranscript(sessionId)
+  const missingOutputs = await verifyToolOutputs(transcript.messages)
+  const staleTasks = await markStaleTasks(metadata.tasks, 30_000)
+  const tokenEstimate = estimateTokens(transcript.messages)
+  const needsCompact = tokenEstimate > metadata.context.blockAt
+  return { ok: transcript.ok, sessionId, messages: transcript.messages, staleTasks, missingOutputs, needsCompactBeforeNextModel: needsCompact }
 }
 ~~~
 
@@ -140,16 +102,15 @@ async function resumeSession(input: ResumeSessionInput): Promise<ResumeSessionRe
 
 | 用例 | 输入 | 期望 |
 |---|---|---|
-| 正常路径 | 合法输入 | ok=true。 |
-| 输入缺失 | 缺 sessionId | invalid_input。 |
-| 权限拒绝 | deny 命中 | permission_denied。 |
-| 超预算 | 预算不足 | budget_exceeded。 |
-| 持久化失败 | transcript 不可写 | persistence_failed。 |
+| 正常恢复 | 完整 metadata + transcript | ResumeReport.ok=true。 |
+| metadata 缺失 | 只有 transcript.jsonl | 重建最小 metadata。 |
+| 最后一行损坏 | JSONL 最后一行半写入 | 丢弃最后一行并追加 repair message。 |
+| 任务心跳过期 | running task heartbeat 超过 30_000 ms | 标记 unknown。 |
+| 恢复后超上下文 | tokenEstimate > blockAt | needsCompactBeforeNextModel=true。 |
 
 ## 验收标准
 
-- 正常路径、失败路径、边界值都有自动化测试。
-- 所有错误都有 code 和 nextAction。
-- 影响下一轮模型行为的数据已经持久化。
-- replay 可以复现关键事件序列。
-- 文档中的默认数字能在配置或常量模块找到同名字段。
+- 有具体默认值。
+- 有结构化错误码。
+- 有可执行伪代码。
+- 测试覆盖正常路径、失败路径和边界值。

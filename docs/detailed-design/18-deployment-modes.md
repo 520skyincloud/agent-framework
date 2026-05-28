@@ -2,136 +2,99 @@
 
 ## 设计目标
 
-定义本地 CLI、桌面端、服务端、队列 worker、离线评估和企业部署的运行差异。
-
-本章必须写到工程师可以直接实现：输入、输出、状态、默认数字、失败处理和验收方式都要明确。
+- 定义本地 CLI、桌面端、服务端、队列 worker、离线评估和企业部署的差异。
 
 ## 非目标
 
 - 不接管其它专题的职责。
-- 不用隐藏全局状态传递关键数据。
-- 不用自然语言错误代替结构化错误。
-- 不把“后续再定”当作实现方案。
+- 不使用隐藏全局状态。
+- 不把失败留给调用方猜测。
 
 ## 核心规则
 
-- 所有输入必须显式传入。
-- 所有输出必须能被 UI、SDK、replay 共用。
-- 所有失败必须返回结构化错误：code、message、recoverable、nextAction。
-- 任何影响下一轮模型输入的状态都必须进入 transcript 或 metadata。
-- 任何副作用都必须先过权限系统和预算系统。
-- 默认值必须集中在配置或常量模块。
+- 本地 CLI 可访问当前 workspace。
+- 服务端模式默认禁用任意 Bash。
+- 队列 worker 必须有 job timeout。
+- 离线评估必须使用 fake provider。
+- 企业模式强制审计、配额、secret redaction。
+- 部署模式必须影响权限默认值。
 
 ## 状态机
 
 ~~~mermaid
 stateDiagram-v2
-  state "接收请求" as Receive
-  state "校验输入" as Validate
-  state "检查预算权限" as Guard
-  state "执行核心逻辑" as Execute
-  state "持久化结果" as Persist
-  state "发出事件" as Emit
-  state "成功" as Success
-  state "失败" as Failure
-
-  [*] --> Receive
-  Receive --> Validate
-  Validate --> Guard: 输入合法
-  Validate --> Failure: 输入非法
-  Guard --> Execute: 允许执行
-  Guard --> Failure: 被拒绝
-  Execute --> Persist
-  Execute --> Failure: 执行失败
-  Persist --> Emit
-  Emit --> Success
-  Success --> [*]
-  Failure --> [*]
+  state "读取部署模式" as S0
+  state "解析存储" as S1
+  state "解析权限 profile" as S2
+  state "解析凭据来源" as S3
+  state "解析任务执行器" as S4
+  state "解析网络策略" as S5
+  state "运行 self-check" as S6
+  state "生成 runtime config" as S7
+  state "启动" as S8
+  [*] --> S0
+  S0 --> S1
+  S1 --> S2
+  S2 --> S3
+  S3 --> S4
+  S4 --> S5
+  S5 --> S6
+  S6 --> S7
+  S7 --> S8
+  S8 --> [*]
 ~~~
 
 ## 数据结构
 
 ~~~ts
-type ResolveDeploymentModeInput = {
-  sessionId: string
-  agentId?: string
-  requestId: string
-  cwd: string
-  config: RuntimeConfig
-  state: RuntimeState
-}
-
-type ResolveDeploymentModeResult =
-  | { ok: true; events: RuntimeEvent[]; statePatch?: Partial<RuntimeState>; messages?: Message[] }
-  | { ok: false; events: RuntimeEvent[]; error: RuntimeError }
-
-type RuntimeError = {
-  code: string
-  message: string
-  recoverable: boolean
-  nextAction: "retry" | "compact" | "ask_user" | "abort" | "fallback"
-  details?: Record<string, unknown>
-}
+type DeploymentMode = "local_cli" | "desktop" | "server" | "worker" | "offline_eval" | "enterprise"
+type DeploymentRuntimeConfig = { mode: DeploymentMode; storageRoot: string; permissionProfile: string; allowBash: boolean; auditRequired: boolean; networkPolicy: "allow" | "deny" | "allowlist" }
 ~~~
 
 ## 默认值
 
 | 配置 | 默认值 | 说明 |
 |---|---:|---|
-| requestTimeoutMs | 120_000 | 单次请求超时。 |
-| maxRetries | 2 | 模块内部恢复重试。 |
-| eventFlushMs | 100 | 事件刷新间隔。 |
-| persistRequired | true | 影响后续模型的状态必须持久化。 |
+| localStorageRoot | ~/.agent | 本地存储。 |
+| serverJobTimeoutMs | 1_800_000 | 服务端任务 30 分钟。 |
+| workerHeartbeatMs | 5_000 | worker 心跳。 |
+| enterpriseAuditRequired | true | 企业审计必开。 |
+| serverBashDefault | deny | 服务端 Bash 默认拒绝。 |
 
 ## 详细流程
 
-1. 读取 deploymentMode。
-2. 解析存储位置。
-3. 解析权限交互方式。
-4. 解析任务执行环境。
-5. 服务端模式禁用本地危险路径。
-6. 企业模式强制审计和配额。
+1. 读取 mode。
+2. 解析 storage root。
+3. 解析 permission profile。
+4. 解析 provider credential 来源。
+5. 解析 task executor。
+6. 解析 network policy。
+7. 生成 DeploymentRuntimeConfig。
+8. 启动前运行 self-check。
 
 ## 失败处理
 
-| 失败 | 处理 |
+| 错误码或失败 | 处理 |
 |---|---|
-| 输入缺字段 | 返回 invalid_input，指出缺失字段，不执行核心逻辑。 |
-| 权限拒绝 | 返回 permission_denied，不自动重试，可让用户确认。 |
-| 超预算 | 返回 budget_exceeded，附当前预算和需要的预算。 |
-| 执行超时 | 返回 timeout，保留已产生事件。 |
-| 持久化失败 | 返回 persistence_failed，阻塞继续执行。 |
-| replay 不一致 | 返回 replay_mismatch，输出第一处不同事件。 |
+| mode_unknown | 拒绝启动。 |
+| storage_unwritable | 拒绝启动。 |
+| missing_credentials | 禁用对应 provider。 |
+| server_bash_requested | 拒绝执行。 |
+| worker_heartbeat_lost | job 标记 unknown，可重试。 |
 
 ## 提示词模板
 
-本章默认不需要专用模型提示词。若实现中需要模型参与，必须把输入、输出格式、失败分支写成固定模板。
+本章没有默认模型调用；如果实现需要模型参与，必须复用上下文压缩、权限解释或工具错误恢复章节的固定提示词。
 
 ## 可实现伪代码
 
 ~~~ts
-async function resolveDeploymentMode(input: ResolveDeploymentModeInput): Promise<ResolveDeploymentModeResult> {
-  const events: RuntimeEvent[] = []
-  const validation = validateInput(input)
-  if (!validation.ok) return { ok: false, events, error: validation.error }
-
-  const guard = await checkBudgetAndPermission(input)
-  if (!guard.ok) {
-    events.push({ type: "guard_rejected", requestId: input.requestId, code: guard.error.code })
-    return { ok: false, events, error: guard.error }
-  }
-
-  try {
-    events.push({ type: "module_started", requestId: input.requestId })
-    const result = await executeCore(input, events)
-    await persistResult(input.sessionId, result)
-    events.push({ type: "module_completed", requestId: input.requestId })
-    return { ok: true, events, statePatch: result.statePatch, messages: result.messages }
-  } catch (error) {
-    const normalized = normalizeRuntimeError(error)
-    events.push({ type: "module_failed", requestId: input.requestId, code: normalized.code })
-    return { ok: false, events, error: normalized }
-  }
+function resolveDeploymentMode(env: Env): DeploymentRuntimeConfig {
+  const mode = parseMode(env.AGENT_MODE ?? "local_cli")
+  if (mode === "server") return { mode, storageRoot: env.AGENT_STORAGE, permissionProfile: "strict", allowBash: false, auditRequired: true, networkPolicy: "allowlist" }
+  if (mode === "offline_eval") return { mode, storageRoot: tempDir(), permissionProfile: "replay", allowBash: false, auditRequired: false, networkPolicy: "deny" }
+  if (mode === "enterprise") return { mode, storageRoot: env.AGENT_STORAGE, permissionProfile: "enterprise", allowBash: false, auditRequired: true, networkPolicy: "allowlist" }
+  return { mode, storageRoot: "~/.agent", permissionProfile: "ask", allowBash: true, auditRequired: false, networkPolicy: "allow" }
 }
 ~~~
 
@@ -139,16 +102,15 @@ async function resolveDeploymentMode(input: ResolveDeploymentModeInput): Promise
 
 | 用例 | 输入 | 期望 |
 |---|---|---|
-| 正常路径 | 合法输入 | ok=true。 |
-| 输入缺失 | 缺 sessionId | invalid_input。 |
-| 权限拒绝 | deny 命中 | permission_denied。 |
-| 超预算 | 预算不足 | budget_exceeded。 |
-| 持久化失败 | transcript 不可写 | persistence_failed。 |
+| 本地 CLI | AGENT_MODE 未设置 | allowBash=true，permissionProfile=ask。 |
+| 服务端 | AGENT_MODE=server | allowBash=false，networkPolicy=allowlist。 |
+| 离线评估 | AGENT_MODE=offline_eval | fake provider，networkPolicy=deny。 |
+| 企业 | AGENT_MODE=enterprise | auditRequired=true，secret redaction 必开。 |
+| 存储不可写 | storageRoot 无写权限 | storage_unwritable，拒绝启动。 |
 
 ## 验收标准
 
-- 正常路径、失败路径、边界值都有自动化测试。
-- 所有错误都有 code 和 nextAction。
-- 影响下一轮模型行为的数据已经持久化。
-- replay 可以复现关键事件序列。
-- 文档中的默认数字能在配置或常量模块找到同名字段。
+- 有具体默认值。
+- 有结构化错误码。
+- 有可执行伪代码。
+- 测试覆盖正常路径、失败路径和边界值。
