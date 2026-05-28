@@ -53,14 +53,14 @@ type PromptAssemblyResult = { providerMessages: ProviderMessage[]; tokenBreakdow
 
 ## 默认值
 
-| 配置 | 默认值 | 说明 |
-|---|---:|---|
-| systemPromptReserve | 4_000 | 系统提示词预算。 |
-| toolSchemaReserve | 30_000 | 工具 schema 默认预算。 |
-| memoryReserve | 8_000 | 记忆预算。 |
-| projectInstructionReserve | 12_000 | 项目指令预算。 |
-| recentMessageMinReserve | 40_000 | 最近消息最低保留预算。 |
-| maxOptionalToolSchemas | 32 | 可选工具 schema 最多注入数量。 |
+| 参数名 | 中文含义 | 单位 | 默认值 | 为什么是这个值 | 触发行为 | 调大后果 | 调小后果 |
+|---|---|---|---:|---|---|---|---|
+| `systemPromptReserve` | 系统提示词预算 | tokens | `4_000` | 这个值按 token 预算设置，用来把关键上下文放进模型输入，同时避免某一类内容挤掉最新用户意图。 | 组装 prompt 或计算 token 预算时使用。 | 该类内容可保留更多，但会挤压其它上下文。 | prompt 更紧凑，但可能丢失必要背景。 |
+| `toolSchemaReserve` | 工具 schema 默认预算 | tokens | `30_000` | 这个值按 token 预算设置，用来把关键上下文放进模型输入，同时避免某一类内容挤掉最新用户意图。 | 组装 prompt 或计算 token 预算时使用。 | 该类内容可保留更多，但会挤压其它上下文。 | prompt 更紧凑，但可能丢失必要背景。 |
+| `memoryReserve` | 记忆预算 | tokens | `8_000` | 这个值按 token 预算设置，用来把关键上下文放进模型输入，同时避免某一类内容挤掉最新用户意图。 | 组装 prompt 或计算 token 预算时使用。 | 该类内容可保留更多，但会挤压其它上下文。 | prompt 更紧凑，但可能丢失必要背景。 |
+| `projectInstructionReserve` | 项目指令预算 | tokens | `12_000` | 这个值按 token 预算设置，用来把关键上下文放进模型输入，同时避免某一类内容挤掉最新用户意图。 | 组装 prompt 或计算 token 预算时使用。 | 该类内容可保留更多，但会挤压其它上下文。 | prompt 更紧凑，但可能丢失必要背景。 |
+| `recentMessageMinReserve` | 最近消息最低保留预算 | tokens | `40_000` | 这个值按 token 预算设置，用来把关键上下文放进模型输入，同时避免某一类内容挤掉最新用户意图。 | 组装 prompt 或计算 token 预算时使用。 | 该类内容可保留更多，但会挤压其它上下文。 | prompt 更紧凑，但可能丢失必要背景。 |
+| `maxOptionalToolSchemas` | 可选工具 schema 最多注入数量 | 个 | `32` | 这个值按 token 预算设置，用来把关键上下文放进模型输入，同时避免某一类内容挤掉最新用户意图。 | 组装 prompt 或计算 token 预算时使用。 | 该类内容可保留更多，但会挤压其它上下文。 | prompt 更紧凑，但可能丢失必要背景。 |
 
 ## 详细流程
 
