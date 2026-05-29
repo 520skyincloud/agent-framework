@@ -17,26 +17,26 @@ Agent Framework 不是一个泛泛讲概念的 Agent 项目，而是一份偏工
 ## 从这里开始
 
 - [文档索引](./docs/README.md)
-- [00. 先读这里](./docs/00-read-me-first.md)：优化记录、源码映射、关键常量、开箱即用实施指南。
-- [详细设计索引](./docs/detailed-design/00-index.md)：如果你要实现框架，先读这里。这里按专题拆好了主循环、消息、上下文、模型路由、工具、权限、持久化、多 Agent、评估和部署。
-- [17. 推荐 MVP 路线](./docs/17-recommended-mvp-plans.md)
-- [30. 部署模式与最终检查清单](./docs/30-deployment-modes-and-final-gap-checklist.md)
+- [00. 先读这里](./docs/00-先读这里.md)：优化记录、源码映射、关键常量、开箱即用实施指南。
+- [详细设计索引](./docs/详细设计/00-索引.md)：如果你要实现框架，先读这里。这里按专题拆好了主循环、消息、上下文、模型路由、工具、权限、持久化、多 Agent、评估和部署。
+- [17. 推荐 MVP 路线](./docs/17-推荐MVP路线.md)
+- [30. 部署模式与最终检查清单](./docs/30-部署模式与最终检查清单.md)
 
 详细设计中的源码提示词会明确标注来源：如果来自 Claude Code 源码，会同时给出英文原文、中文版本、源码路径和调用路径；如果不是源码内置，会标为本框架建议模板。
 
 ## 推荐阅读顺序
 
-1. [00. 先读这里](./docs/00-read-me-first.md)
-2. [详细设计索引](./docs/detailed-design/00-index.md)
-3. [02. 核心运行时模型](./docs/02-core-runtime-model.md)
-4. [04. 工具协议](./docs/04-tool-protocol.md)
-5. [07. 上下文管理](./docs/07-context-management.md)
-6. [15. 持久化与恢复](./docs/15-persistence-and-resume.md)
-7. [17. 推荐 MVP 路线](./docs/17-recommended-mvp-plans.md)
-8. [21. 模型适配层与模型路由](./docs/21-provider-adapter-and-model-routing.md)
-9. [22. Prompt 与上下文组装](./docs/22-prompt-and-context-assembly.md)
-10. [26. 评估、回放与回归测试](./docs/26-evaluation-replay-and-regression-testing.md)
-11. [29. 多 Agent 冲突处理](./docs/29-multi-agent-conflict-handling.md)
+1. [00. 先读这里](./docs/00-先读这里.md)
+2. [详细设计索引](./docs/详细设计/00-索引.md)
+3. [02. 核心运行时模型](./docs/02-核心运行时模型.md)
+4. [04. 工具协议](./docs/04-工具协议.md)
+5. [07. 上下文管理](./docs/07-上下文管理.md)
+6. [15. 持久化与恢复](./docs/15-持久化与恢复.md)
+7. [17. 推荐 MVP 路线](./docs/17-推荐MVP路线.md)
+8. [21. 模型适配层与模型路由](./docs/21-模型适配层与模型路由.md)
+9. [22. Prompt 与上下文组装](./docs/22-提示词与上下文组装.md)
+10. [26. 评估、回放与回归测试](./docs/26-评估回放与回归测试.md)
+11. [29. 多 Agent 冲突处理](./docs/29-多智能体冲突处理.md)
 
 ## 第一阶段目标
 
@@ -64,9 +64,9 @@ Agent Framework 不是一个泛泛讲概念的 Agent 项目，而是一份偏工
 │       └── verify.md
 ├── docs/
 │   ├── README.md
-│   ├── 00-read-me-first.md
-│   ├── 01-product-shape.md
-│   ├── detailed-design/
+│   ├── 00-先读这里.md
+│   ├── 01-产品形态.md
+│   ├── 详细设计/
 │   └── ...
 ├── package.json
 └── README.md
@@ -91,4 +91,4 @@ npm run docs:check
 
 ## 当前状态
 
-当前仓库是文档优先项目，还不是可执行框架。下一步最自然的方向，是把 [00. 先读这里](./docs/00-read-me-first.md) 里的工程脚手架实现成一个可运行的 TypeScript Agent Runtime。
+当前仓库是文档优先项目，还不是可执行框架。下一步最自然的方向，是把 [00. 先读这里](./docs/00-先读这里.md) 里的工程脚手架实现成一个可运行的 TypeScript Agent Runtime。
