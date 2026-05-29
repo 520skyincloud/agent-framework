@@ -85,6 +85,8 @@ type PermissionAuditRecord = { sessionId: string; toolUseId: string; toolName: s
 
 ### 权限解释提示词
 
+来源：本框架建议模板，不是 Claude Code 源码内置 prompt。Claude Code 的权限流程包含规则、hook、用户确认和工具安全检查；这里给的是实现框架时可复用的解释模板。
+
 ~~~text
 你是权限解释器。请用简短中文解释为什么这个工具调用需要允许、被拒绝或需要用户确认。
 必须包含：工具名、目标资源、风险、如果允许会发生什么、如果拒绝会怎样继续。

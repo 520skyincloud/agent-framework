@@ -100,7 +100,7 @@ type ToolResultMessage = {
 
 ## 提示词模板
 
-本章不使用模型提示词；损坏修复由确定性 repair message 完成。
+来源：不适用。本章不使用模型提示词；损坏修复由确定性 repair message 完成。
 
 ## 可实现伪代码
 

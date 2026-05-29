@@ -96,6 +96,8 @@ type RetryDecision = { action: "retry_same" | "retry_with_more_output" | "compac
 
 ## 提示词模板
 
+来源：本框架建议模板，不是 Claude Code 源码内置 prompt。Claude Code 源码里没有这个同名模型降级说明 prompt；真实 compact prompt 见 `src/services/compact/prompt.ts`。
+
 ~~~text
 当前会话将切换到上下文更小的模型。你只能根据压缩摘要、最新用户指令和可重新读取的文件继续任务。不要假装看过完整历史；缺信息时先调用工具读取。
 ~~~

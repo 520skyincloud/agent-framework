@@ -88,6 +88,8 @@ type ToolDefinition<I,O> = { name: string; inputSchema: Schema<I>; isReadOnly(in
 
 ### 工具错误恢复提示词
 
+来源：本框架建议模板，不是 Claude Code 源码内置 prompt。Claude Code 工具失败恢复主要由工具结果结构、错误码和主循环决策处理。
+
 ~~~text
 你刚才的工具调用失败了。请根据 tool_result 中的错误码修正下一步。
 规则：

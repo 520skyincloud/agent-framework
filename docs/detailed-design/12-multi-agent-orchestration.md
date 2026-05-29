@@ -83,13 +83,21 @@ type SubagentResult = { agentId: string; transcriptPath: string; summary: string
 
 ## 提示词模板
 
-### 子 Agent 总结提示词
+### 框架建议子 Agent 总结提示词
+
+来源：本框架建议模板，不是 Claude Code compact 源码内置 prompt。
+
+Claude Code 中与 Agent summary 相关的真实源码位置是 `/Users/sky/Downloads/claude-code-main/src/services/AgentSummary/agentSummary.ts`。它用于 coordinator/sub-agent 的周期性背景摘要，目标是生成短进度摘要，不等同于 conversation compact prompt，也不等同于下面这个给父 Agent 合并用的完整子 Agent 摘要模板。
+
+适用场景：子 Agent 完成、失败、超时或返回 partial result 后，父 Agent 不能直接吞完整 transcript，只接收摘要、引用路径和风险。
 
 ~~~text
 你是子 Agent 总结器。请把子 Agent 的运行结果压缩给父 Agent。
 必须包含：任务、使用过的工具、读过或改过的文件、确定事实、失败、风险、不确定项、建议下一步。
 禁止包含完整聊天历史。禁止把猜测写成事实。最多 8_000 tokens。
 ~~~
+
+如果要贴近 Claude Code 的 coordinator 模式，应把摘要拆成两层：短进度摘要用于 UI 或 coordinator 状态，完整交接摘要用于父 Agent 决策。
 
 ## 可实现伪代码
 

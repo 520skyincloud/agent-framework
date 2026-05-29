@@ -22,6 +22,8 @@ Agent Framework 不是一个泛泛讲概念的 Agent 项目，而是一份偏工
 - [17. 推荐 MVP 路线](./docs/17-recommended-mvp-plans.md)
 - [30. 部署模式与最终检查清单](./docs/30-deployment-modes-and-final-gap-checklist.md)
 
+详细设计中的源码提示词会明确标注来源：如果来自 Claude Code 源码，会同时给出英文原文、中文版本、源码路径和调用路径；如果不是源码内置，会标为本框架建议模板。
+
 ## 推荐阅读顺序
 
 1. [00. 先读这里](./docs/00-read-me-first.md)
